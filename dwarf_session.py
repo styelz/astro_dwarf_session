@@ -119,10 +119,10 @@ def try_attemps (function, function_succeed_message, max_attempts = 3):
 
     return continue_action
 
-def start_dwarf_session(program, type_dwarf = 2):
+def start_dwarf_session(program, type_dwarf = 3):
     try:
         data_config = dwarf_python_api.get_config_data.get_config_data()
-        dwarf_id = "2"
+        dwarf_id = "3"  # Default Dwarf ID
         if data_config["dwarf_id"]:
             dwarf_id = data_config['dwarf_id']
         dwarf_ip = ""

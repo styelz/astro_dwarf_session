@@ -232,6 +232,22 @@ def check_integer(value):
 
     return value  # Return the valid value
 
+def get_json_files_sorted_by_uuid(directory):
+    files_with_uuid = []
+    if os.path.exists(directory):
+        for fname in os.listdir(directory):
+            if fname.endswith('.json'):
+                fpath = os.path.join(directory, fname)
+                try:
+                    with open(fpath, 'r') as f:
+                        data = json.load(f)
+                    uuid = data.get('command', {}).get('id_command', {}).get('uuid', '')
+                except Exception:
+                    uuid = ''
+                files_with_uuid.append((uuid, fname))
+        files_with_uuid.sort(key=lambda x: (x[0] == '', x[0]))
+    return [fname for uuid, fname in files_with_uuid]
+
 # Function to save data to JSON file
 def save_to_json(settings_vars, config_vars):
     global uuid_counter

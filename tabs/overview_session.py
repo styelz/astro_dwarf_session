@@ -35,12 +35,60 @@ def overview_session_tab(parent_frame):
 def populate_json_list(json_listbox):
     """Populates the listbox with JSON files from the Astro_Sessions folder."""
     json_listbox.delete(0, tk.END)
-    try:
-        for filename in os.listdir(LIST_ASTRO_DIR_DEFAULT["SESSIONS_DIR"]):
-            if filename.endswith('.json'):
-               json_listbox.insert(tk.END, filename)
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to load JSON files: {e}")
+    # Helper to get sorted files by uuid
+    def get_json_files_sorted_by_uuid(directory):
+        files_with_uuid = []
+        if os.path.exists(directory):
+            for fname in os.listdir(directory):
+                if fname.endswith('.json'):
+                    fpath = os.path.join(directory, fname)
+                    try:
+                        with open(fpath, 'r') as f:
+                            data = json.load(f)
+                        uuid = data.get('command', {}).get('id_command', {}).get('uuid', '')
+                    except Exception:
+                        uuid = ''
+                    files_with_uuid.append((uuid, fname))
+            files_with_uuid.sort(key=lambda x: (x[0] == '', x[0]))
+        return [fname for uuid, fname in files_with_uuid]
+
+    # Get files from all session subdirectories
+    from astro_dwarf_scheduler import LIST_ASTRO_DIR
+    sessions_dir = LIST_ASTRO_DIR_DEFAULT["SESSIONS_DIR"]
+    subdirs = {
+        'main': {'path': sessions_dir, 'label': '', 'color': 'black', 'font': None},
+        'ToDo': {'path': LIST_ASTRO_DIR["TODO_DIR"], 'label': ' [ToDo]', 'color': 'blue', 'font': None},
+        'Current': {'path': os.path.join(sessions_dir, 'Current'), 'label': ' [Current]', 'color': 'purple', 'font': None},
+        'Done': {'path': os.path.join(sessions_dir, 'Done'), 'label': ' [Done]', 'color': 'green', 'font': None},
+        'Error': {'path': os.path.join(sessions_dir, 'Error'), 'label': ' [Error]', 'color': 'red', 'font': None},
+        'Results': {'path': os.path.join(sessions_dir, 'Results'), 'label': ' [Results]', 'color': 'gray', 'font': None},
+    }
+    files_with_origin = []
+    for key, info in subdirs.items():
+        dirpath = info['path']
+        label = info['label']
+        for fname in os.listdir(dirpath) if os.path.exists(dirpath) else []:
+            if fname.endswith('.json'):
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    with open(fpath, 'r') as f:
+                        data = json.load(f)
+                    uuid = data.get('command', {}).get('id_command', {}).get('uuid', '')
+                except Exception:
+                    uuid = ''
+                files_with_origin.append((uuid, fname, dirpath, label, info['color'], info['font']))
+    # Sort all by uuid (empty uuid last)
+    files_with_origin.sort(key=lambda x: (x[0] == '', x[0]))
+    # Insert into listbox and build mapping
+    json_listbox.file_origin_map = {}
+    for uuid, fname, dirpath, label, color, font in files_with_origin:
+        display_name = fname + label
+        json_listbox.insert(tk.END, display_name)
+        if font:
+            json_listbox.itemconfig(tk.END, foreground=color, font=font)
+        else:
+            json_listbox.itemconfig(tk.END, foreground=color)
+        json_listbox.file_origin_map[display_name] = (dirpath, fname)
 
 def on_json_select(event, json_listbox, json_text):
     """Triggered when a JSON file is selected, and displays its content."""
@@ -49,8 +97,12 @@ def on_json_select(event, json_listbox, json_text):
         # Get the last selected item
         last_selected_index = selection[-1]
         selected_file = json_listbox.get(last_selected_index)
-        filepath = os.path.join(LIST_ASTRO_DIR_DEFAULT["SESSIONS_DIR"], selected_file)
-        display_json_content(filepath, json_text)
+        # Determine origin
+        file_origin_map = getattr(json_listbox, 'file_origin_map', {})
+        if selected_file in file_origin_map:
+            dirpath, fname = file_origin_map[selected_file]
+            filepath = os.path.join(dirpath, fname)
+            display_json_content(filepath, json_text)
 
 def display_json_content(filepath, json_text):
     """Displays the content of the selected JSON file in the text area."""
@@ -132,22 +184,33 @@ def select_session(json_listbox, json_text, select_button):
 
     selection = json_listbox.curselection()
     if selection:
+        file_origin_map = getattr(json_listbox, 'file_origin_map', {})
         for index in selection:
             selected_file = json_listbox.get(index)
-            source_path = os.path.join(LIST_ASTRO_DIR_DEFAULT["SESSIONS_DIR"], selected_file)
-            destination_path = os.path.join(LIST_ASTRO_DIR["TODO_DIR"], selected_file)
-            
-            try:
-                # Move the file to the ToDo directory
-                shutil.move(source_path, destination_path)
-                print(f"Moved {selected_file} to ToDo folder.")
-
-            except Exception as e:
-                print(f"Error moving file {selected_file}: {e}")
-
+            if selected_file in file_origin_map:
+                dirpath, fname = file_origin_map[selected_file]
+                # If file is in ToDo, move it back to parent dir
+                if os.path.basename(dirpath) == "ToDo":
+                    parent_dir = os.path.dirname(dirpath)
+                    dest_path = os.path.join(parent_dir, fname)
+                    source_path = os.path.join(dirpath, fname)
+                    try:
+                        shutil.move(source_path, dest_path)
+                        print(f"Moved {fname} back to {parent_dir}.")
+                    except Exception as e:
+                        print(f"Error moving file {fname}: {e}")
+                else:
+                    # Move file to ToDo as before
+                    from astro_dwarf_scheduler import LIST_ASTRO_DIR
+                    source_path = os.path.join(dirpath, fname)
+                    destination_path = os.path.join(LIST_ASTRO_DIR["TODO_DIR"], fname)
+                    try:
+                        shutil.move(source_path, destination_path)
+                        print(f"Moved {fname} to ToDo folder.")
+                    except Exception as e:
+                        print(f"Error moving file {fname}: {e}")
         # Refresh the listbox after moving all files
         populate_json_list(json_listbox)
-
         # Clear the text area and disable the select button
         json_text.config(state=tk.NORMAL)
         json_text.delete(1.0, tk.END)

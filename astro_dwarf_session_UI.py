@@ -151,9 +151,26 @@ class TextHandler(logging.Handler):
     def emit(self, record):
         # Format the log message
         msg = self.format(record)
-        # Append the message to the text widget
-        self.text_widget.insert(tk.END, msg + '\n')
-        # Auto scroll to the end
+        # Determine color and emoji based on log level
+        if record.levelno >= logging.ERROR:
+            color = 'red'
+            emoji = '❌ '
+        elif record.levelno == logging.WARNING:
+            color = 'orange'
+            emoji = '⚠️ '
+        elif record.levelno == logging.INFO:
+            color = 'blue'
+            emoji = 'ℹ️ '
+        elif hasattr(logging, 'SUCCESS') and record.levelno == logging.SUCCESS:
+            color = 'green'
+            emoji = '✅ '
+        else:
+            color = 'black'
+            emoji = ''
+        # Insert with tag for color
+        self.text_widget.config(state=tk.NORMAL)
+        self.text_widget.insert(tk.END, emoji + msg + '\n', color)
+        self.text_widget.tag_config(color, foreground=color)
         self.text_widget.yview(tk.END)
 
 # GUI Application class
@@ -164,30 +181,244 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.geometry("800x800")
         
         # Create tabs
+
         self.tab_control = ttk.Notebook(self)
         self.tab_control.pack(expand=1, fill="both")
-        
+
         self.tab_main = ttk.Frame(self.tab_control)
         self.tab_settings = ttk.Frame(self.tab_control)
         self.tab_overview_session = ttk.Frame(self.tab_control)
         self.tab_result_session = ttk.Frame(self.tab_control)
         self.tab_create_session = ttk.Frame(self.tab_control)
-        
+        self.tab_load_session = ttk.Frame(self.tab_control)
+
         self.tab_control.add(self.tab_main, text="Main")
         self.tab_control.add(self.tab_settings, text="Settings")
         self.tab_control.add(self.tab_overview_session, text="Session Overview")
         self.tab_control.add(self.tab_result_session, text="Results Session")
         self.tab_control.add(self.tab_create_session, text="Create Session")
-        
+        self.tab_control.add(self.tab_load_session, text="Edit Sessions")
+
         self.refresh_results = None
         self.create_main_tab()
         self.settings_vars = {}
         self.config_vars = {}
-        settings.create_settings_tab(self.tab_settings, self.config_vars) 
-        overview_session.overview_session_tab(self.tab_overview_session)
+        settings.create_settings_tab(self.tab_settings, self.config_vars)
+        # Store refresh functions for tabs
+        self.overview_refresh = None
+        self.edit_sessions_refresh = None
+        # Setup overview tab and capture refresh
+        def overview_tab_wrapper(parent):
+            # Patch overview_session_tab to capture the refresh function
+            result = overview_session.overview_session_tab(parent)
+            if callable(result):
+                self.overview_refresh = result
+        overview_tab_wrapper(self.tab_overview_session)
         # Add the tab's content and capture the refresh function
         self.refresh_results = result_session.result_session_tab(self.tab_result_session)
         create_session.create_session_tab(self.tab_create_session, self.settings_vars, self.config_vars)
+        # Patch create_load_session_tab to capture refresh
+        def edit_sessions_tab_wrapper():
+            # Patch create_load_session_tab to capture the refresh function
+            result = self.create_load_session_tab()
+            if callable(result):
+                self.edit_sessions_refresh = result
+        edit_sessions_tab_wrapper()
+
+        # Bind tab change event to refresh file lists
+        def on_tab_changed(event):
+            tab = event.widget.tab(event.widget.index('current'))['text']
+            if tab == 'Session Overview' and self.overview_refresh:
+                self.overview_refresh()
+            elif tab == 'Edit Sessions' and self.edit_sessions_refresh:
+                self.edit_sessions_refresh()
+        self.tab_control.bind('<<NotebookTabChanged>>', on_tab_changed)
+
+    def create_load_session_tab(self):
+        """Create the Edit Sessions tab with entry widgets for each field in the JSON structure."""
+        import json
+        from astro_dwarf_scheduler import LIST_ASTRO_DIR
+        session_dir = LIST_ASTRO_DIR["SESSIONS_DIR"]
+
+        frame = tk.Frame(self.tab_load_session)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        label = tk.Label(frame, text="Available Sessions (JSON files):", font=("Arial", 12))
+        label.pack(anchor="w")
+
+        listbox = tk.Listbox(frame, width=40, height=20)
+        listbox.pack(side=tk.LEFT, fill=tk.Y, padx=(0,10))
+
+        scrollbar = tk.Scrollbar(frame, orient="vertical", command=listbox.yview)
+        scrollbar.pack(side=tk.LEFT, fill=tk.Y)
+        listbox.config(yscrollcommand=scrollbar.set)
+
+
+        # --- Add scrollable form frame (scrollbar on right) ---
+        form_canvas = tk.Canvas(frame, borderwidth=0, highlightthickness=0)
+        form_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        form_scrollbar = tk.Scrollbar(frame, orient="vertical", command=form_canvas.yview)
+        form_scrollbar.pack(side=tk.LEFT, fill=tk.Y, padx=(0,0))
+        form_canvas.configure(yscrollcommand=form_scrollbar.set)
+        # Create a frame inside the canvas
+        form_frame = tk.Frame(form_canvas)
+        form_window = form_canvas.create_window((0, 0), window=form_frame, anchor="nw")
+
+        # Move the scrollbar to the right of the canvas and listbox
+        frame.pack_propagate(False)
+        form_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        form_scrollbar.pack_forget()
+        form_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def on_frame_configure(event):
+            form_canvas.configure(scrollregion=form_canvas.bbox("all"))
+        form_frame.bind("<Configure>", on_frame_configure)
+        # Allow mousewheel scrolling
+        def _on_mousewheel(event):
+            form_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        form_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # Store entry widgets for each field
+        entries = {}
+        selected_file = {'name': None, 'data': None}
+
+        def get_json_files_sorted_by_uuid(directory):
+            files_with_uuid = []
+            if os.path.exists(directory):
+                for fname in os.listdir(directory):
+                    if fname.endswith('.json'):
+                        fpath = os.path.join(directory, fname)
+                        try:
+                            with open(fpath, 'r') as f:
+                                data = json.load(f)
+                            uuid = data.get('command', {}).get('id_command', {}).get('uuid', '')
+                        except Exception:
+                            uuid = ''
+                        files_with_uuid.append((uuid, fname))
+                files_with_uuid.sort(key=lambda x: (x[0] == '', x[0]))
+            return [fname for uuid, fname in files_with_uuid]
+
+        def refresh_list():
+            listbox.delete(0, tk.END)
+            for fname in get_json_files_sorted_by_uuid(session_dir):
+                listbox.insert(tk.END, fname)
+            clear_form()
+            selected_file['name'] = None
+            selected_file['data'] = None
+
+        def clear_form():
+            for widget in form_frame.winfo_children():
+                widget.destroy()
+            entries.clear()
+
+        def populate_form(data):
+            clear_form()
+            row = 0
+            # id_command fields
+            id_cmd = data['command']['id_command']
+            tk.Label(form_frame, text="Session Info", font=("Arial", 11, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0,5))
+            row += 1
+            for key in ["uuid", "description", "date", "time", "process", "max_retries", "result", "message", "nb_try"]:
+                tk.Label(form_frame, text=key+":").grid(row=row, column=0, sticky="e")
+                val = id_cmd.get(key, "")
+                ent = tk.Entry(form_frame, width=40)
+                ent.insert(0, str(val))
+                ent.grid(row=row, column=1, sticky="w")
+                entries[('id_command', key)] = ent
+                # Bind events for real-time save
+                ent.bind('<FocusOut>', lambda e, k=key: save_json())
+                ent.bind('<Return>', lambda e, k=key: save_json())
+                row += 1
+            # Subcommands
+            for subcmd in ["eq_solving", "auto_focus", "infinite_focus", "calibration", "goto_solar", "goto_manual", "setup_camera", "setup_wide_camera"]:
+                tk.Label(form_frame, text=subcmd, font=("Arial", 10, "bold")).grid(row=row, column=0, sticky="w", pady=(10,0))
+                row += 1
+                sub = data['command'].get(subcmd, {})
+                for k, v in sub.items():
+                    tk.Label(form_frame, text="    "+k+":").grid(row=row, column=0, sticky="e")
+                    ent = tk.Entry(form_frame, width=40)
+                    ent.insert(0, str(v))
+                    ent.grid(row=row, column=1, sticky="w")
+                    entries[(subcmd, k)] = ent
+                    # Bind events for real-time save
+                    ent.bind('<FocusOut>', lambda e, s=subcmd, kk=k: save_json())
+                    ent.bind('<Return>', lambda e, s=subcmd, kk=k: save_json())
+                    row += 1
+
+        def on_select(event):
+            # Save changes to the current file before switching
+            if selected_file['name'] and selected_file['data']:
+                save_json()
+            selection = listbox.curselection()
+            if not selection:
+                return
+            fname = listbox.get(selection[0])
+            fpath = os.path.join(session_dir, fname)
+            try:
+                with open(fpath, 'r') as f:
+                    data = json.load(f)
+                selected_file['name'] = fname
+                selected_file['data'] = data
+                populate_form(data)
+            except Exception as e:
+                clear_form()
+                tk.Label(form_frame, text=f"Error loading file: {e}", fg="red").pack()
+                selected_file['name'] = None
+                selected_file['data'] = None
+
+        def save_json():
+            fname = selected_file['name']
+            if not fname:
+                messagebox.showwarning("No file selected", "Please select a session file to save.")
+                return
+            data = selected_file['data']
+            if not data:
+                messagebox.showerror("No data", "No session data loaded.")
+                return
+            # Update data from entries
+            id_cmd = data['command']['id_command']
+            for key in ["uuid", "description", "date", "time", "process", "max_retries", "result", "message", "nb_try"]:
+                val = entries[('id_command', key)].get()
+                # Convert types for bool/int/float if needed
+                if key in ["max_retries", "nb_try"]:
+                    try: val = int(val)
+                    except: val = 0
+                elif key == "result":
+                    val = val.lower() == 'true'
+                id_cmd[key] = val
+            # Subcommands
+            for subcmd in ["eq_solving", "auto_focus", "infinite_focus", "calibration", "goto_solar", "goto_manual", "setup_camera", "setup_wide_camera"]:
+                sub = data['command'].get(subcmd, {})
+                for k in sub.keys():
+                    val = entries[(subcmd, k)].get()
+                    # Try to convert to int/float/bool if possible
+                    if val.lower() in ['true', 'false']:
+                        val = val.lower() == 'true'
+                    else:
+                        try:
+                            if '.' in val:
+                                val = float(val)
+                            else:
+                                val = int(val)
+                        except:
+                            pass
+                    sub[k] = val
+            # Save to file
+            fpath = os.path.join(session_dir, fname)
+            try:
+                with open(fpath, 'w') as f:
+                    json.dump(data, f, indent=4)
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Could not save file: {e}")
+
+        listbox.bind('<<ListboxSelect>>', on_select)
+        refresh_list()
+
+        # Bottom button frame (only Refresh List button)
+        button_frame = tk.Frame(self.tab_load_session)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+        refresh_btn = tk.Button(button_frame, text="Refresh List", command=refresh_list)
+        refresh_btn.pack(side=tk.RIGHT, padx=5)
 
         self.result = False
         self.bluetooth_connected = False
@@ -197,10 +428,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.unset_lock_device_mode = True
         self.protocol("WM_DELETE_WINDOW", self.quit_method)
 
-    def refresh_data(self):
-        # Call the refresh function directly
-        if self.refresh_results:
-            self.refresh_results()
+        # Return the refresh_list function so it can be called externally
+        return refresh_list
 
     def quit_method(self):
         '''
@@ -294,6 +523,12 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 self.show_current_config(config_name, True)
         else:
             messagebox.showwarning("Input Error", "Configuration name cannot be empty.")
+
+
+    def refresh_data(self):
+        # Call the refresh function directly
+        if self.refresh_results:
+            self.refresh_results()
 
     def show_current_config(self, config_name, created = False):
         from astro_dwarf_scheduler import LIST_ASTRO_DIR
@@ -407,8 +642,18 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.polar_button.grid(row=0, column=4, padx=5)
         
         # Log text area
-        self.log_text = tk.Text(self.tab_main, wrap=tk.WORD, height=15)
+        # Use a font that supports emoji, e.g., Segoe UI Emoji on Windows
+        emoji_font = ("Segoe UI Emoji", 10)
+        self.log_text = tk.Text(self.tab_main, wrap=tk.WORD, height=15, font=emoji_font)
         self.log_text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+        # Add Clear Log button
+        clear_log_btn = tk.Button(self.tab_main, text="Clear Log", command=self.clear_log_output)
+        clear_log_btn.pack(padx=10, pady=(0,10), anchor="e")
+    def clear_log_output(self):
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.config(state=tk.NORMAL)
 
     def start_bluetooth(self):
         self.disable_controls()
@@ -556,7 +801,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
 
     def run_start_polar_position(self):
         try:
-            dwarf_id = "2"
+            dwarf_id = "3" # Default value
             data_config = dwarf_python_api.get_config_data.get_config_data()
             if data_config["dwarf_id"]:
                 dwarf_id = data_config['dwarf_id']
@@ -608,8 +853,26 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.logger.info("Removing L...")
         self.logger.removeHandler(self.text_handler)  # Remove the TextHandler
 
-    def log(self, message):
-        self.log_text.insert(tk.END, message + "\n")
+    def log(self, message, level="info"):
+        # Add color and emoji for direct log calls
+        if level == "error":
+            color = "red"
+            emoji = "❌ "
+        elif level == "warning":
+            color = "orange"
+            emoji = "⚠️ "
+        elif level == "success":
+            color = "green"
+            emoji = "✅ "
+        elif level == "info":
+            color = "blue"
+            emoji = "ℹ️ "
+        else:
+            color = "black"
+            emoji = ""
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.insert(tk.END, emoji + message + "\n", color)
+        self.log_text.tag_config(color, foreground=color)
         self.log_text.see(tk.END)
 
 # Main application

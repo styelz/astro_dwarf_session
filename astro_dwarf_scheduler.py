@@ -213,124 +213,140 @@ def retry_procedure(program, max_retries =3):
 last_logged = {}  # Dictionary to track when each file was last logged
 last_hourly_log = {}  # Dictionary to track the last hourly log time for each filename
 
+
+# Helper to get JSON files sorted by uuid
+def get_json_files_sorted_by_uuid(directory):
+    files_with_uuid = []
+    for fname in os.listdir(directory):
+        if fname.endswith('.json'):
+            fpath = os.path.join(directory, fname)
+            try:
+                with open(fpath, 'r') as f:
+                    data = json.load(f)
+                uuid = data.get('command', {}).get('id_command', {}).get('uuid', '')
+            except Exception:
+                uuid = ''
+            files_with_uuid.append((uuid, fname))
+    files_with_uuid.sort(key=lambda x: (x[0] == '', x[0]))
+    return [fname for uuid, fname in files_with_uuid]
+
 # Main function to check and execute the commands
 def check_and_execute_commands(askBluetooth = False):
     global LIST_ASTRO_DIR
-    for filename in os.listdir(LIST_ASTRO_DIR["TODO_DIR"]):
+    for filename in get_json_files_sorted_by_uuid(LIST_ASTRO_DIR["TODO_DIR"]):
         filepath = os.path.join(LIST_ASTRO_DIR["TODO_DIR"], filename)
-        if filepath.endswith('.json'):
-            program = load_json(filepath)
-            if program is False:
-                return
+        program = load_json(filepath)
+        if program is False:
+            return
 
-            # Extract command info
-            command = program.get('command', {}).get('id_command')
+        # Extract command info
+        command = program.get('command', {}).get('id_command')
 
-            # ignore file if command or id_command doesn't exist
-            if not command:
-                log.error(f"Mandatory commands not found in file, the file {filename} is ignored")
+        # ignore file if command or id_command doesn't exist
+        if not command:
+            log.error(f"Mandatory commands not found in file, the file {filename} is ignored")
+            # Move file to "Error" folder
+            current_filepath = os.path.join(LIST_ASTRO_DIR["TODO_DIR"], filename)
+            move_file(current_filepath, os.path.join(LIST_ASTRO_DIR["ERROR_DIR"], filename))
+            log.notice("----------------------")
+            log.notice("----------------------")
+
+        # Ignore file if process exists and is different from 'wait' 
+        elif command.get('process') is not None and command.get('process') != 'wait':
+            log.warning(f"Process value is not 'wait', the file {filename} is ignored")
+            # Move file to "Error" folder
+            current_filepath = os.path.join(LIST_ASTRO_DIR["TODO_DIR"], filename)
+            move_file(current_filepath, os.path.join(LIST_ASTRO_DIR["ERROR_DIR"], filename))
+            log.notice("----------------------")
+            log.notice("----------------------")
+        # Check if the execution time has been reached
+        elif is_time_to_execute(command) and command.get('process', 'wait') == 'wait':
+            log.notice("######################")
+            log.notice(f"Find File  {filename}, that is ready to execute")
+            log.debug(f"Executing command {command.get('uuid')}")
+
+            # Move to "Current" folder and update status
+            current_filepath = os.path.join(LIST_ASTRO_DIR["CURRENT_DIR"], filename)
+            program = update_process_status(program, 'pending')
+            save_json(filepath, program)
+            move_file(filepath, current_filepath)
+
+            # Remove from the logging dictionary as it's been executed
+            if filename in last_logged:
+                del last_logged[filename]
+            if filename in last_hourly_log:
+                del last_hourly_log[filename]
+
+            try:
+                # Get The Dwarf Type
+                data_config = dwarf_python_api.get_config_data.get_config_data()
+                dwarf_id = "2"
+                if data_config["dwarf_id"]:
+                    dwarf_id = data_config['dwarf_id']
+                # Execute the session
+                max_retries = int(program['command']['id_command'].get('max_retries', 3))
+                nb_try = retry_procedure(program)
+
+                # If successful, update process and result
+                program = update_process_status(program, 'ended', True, "Action completed successfully.", nb_try, dwarf_id)
+                save_json(current_filepath, program)
+
+                # Move file to "Done" folder
+                move_file(current_filepath, os.path.join(LIST_ASTRO_DIR["DONE_DIR"], filename))
+
+            except Exception as e:
+                # Handle errors and update process and result
+                error_message = f"Error during execution: {e}"
+                log.error(error_message)
+
+                program = update_process_status(program, 'ended', False, error_message, max_retries, dwarf_id)
+                save_json(current_filepath, program)
+
                 # Move file to "Error" folder
-                current_filepath = os.path.join(LIST_ASTRO_DIR["TODO_DIR"], filename)
                 move_file(current_filepath, os.path.join(LIST_ASTRO_DIR["ERROR_DIR"], filename))
                 log.notice("----------------------")
                 log.notice("----------------------")
-
-            # Ignore file if process exists and is different from 'wait' 
-            elif command.get('process') is not None and command.get('process') != 'wait':
-                log.warning(f"Process value is not 'wait', the file {filename} is ignored")
-                # Move file to "Error" folder
-                current_filepath = os.path.join(LIST_ASTRO_DIR["TODO_DIR"], filename)
-                move_file(current_filepath, os.path.join(LIST_ASTRO_DIR["ERROR_DIR"], filename))
-                log.notice("----------------------")
-                log.notice("----------------------")
-            # Check if the execution time has been reached
-            elif is_time_to_execute(command) and command.get('process', 'wait') == 'wait':
-                log.notice("######################")
-                log.notice(f"Find File  {filename}, that is ready to execute")
-                log.debug(f"Executing command {command.get('uuid')}")
-
-                # Move to "Current" folder and update status
-                current_filepath = os.path.join(LIST_ASTRO_DIR["CURRENT_DIR"], filename)
-                program = update_process_status(program, 'pending')
-                save_json(filepath, program)
-                move_file(filepath, current_filepath)
-
-                # Remove from the logging dictionary as it's been executed
-                if filename in last_logged:
-                    del last_logged[filename]
-                if filename in last_hourly_log:
-                    del last_hourly_log[filename]
-
-                try:
-                    # Get The Dwarf Type
-                    data_config = dwarf_python_api.get_config_data.get_config_data()
-                    dwarf_id = "2"
-                    if data_config["dwarf_id"]:
-                        dwarf_id = data_config['dwarf_id']
-                    # Execute the session
-                    max_retries = int(program['command']['id_command'].get('max_retries', 3))
-                    nb_try = retry_procedure(program)
-
-                    # If successful, update process and result
-                    program = update_process_status(program, 'ended', True, "Action completed successfully.", nb_try, dwarf_id)
-                    save_json(current_filepath, program)
-
-                    # Move file to "Done" folder
-                    move_file(current_filepath, os.path.join(LIST_ASTRO_DIR["DONE_DIR"], filename))
-
-                except Exception as e:
-                    # Handle errors and update process and result
-                    error_message = f"Error during execution: {e}"
-                    log.error(error_message)
-
-                    program = update_process_status(program, 'ended', False, error_message, max_retries, dwarf_id)
-                    save_json(current_filepath, program)
-
-                    # Move file to "Error" folder
-                    move_file(current_filepath, os.path.join(LIST_ASTRO_DIR["ERROR_DIR"], filename))
-                    log.notice("----------------------")
-                    log.notice("----------------------")
-                    if (askBluetooth and fn_wait_for_user_input(60, "An error occuring during last Action, do you want to reconnect to bluetooth or continue ?\nThe program will contine if you don't press CTRL-C within 60 seconds:" ))  == 1:
-                        log.notice('continuing ....')
-                    elif askBluetooth:
-                        start_connection(True)
-                    else:
-                        log.notice('continuing ....')
-                    pass
-
-            # Log Ignore time
-            elif command.get('process', 'wait') == 'wait':
-                # Get current date and time
-                current_datetime = datetime.now()
-                command_datetime = get_time_to_execute(current_datetime, command)
-
-                # If the file isn't ready, log it based on the time since the last log
-                if filename not in last_logged:
-                    # Log the first time
-                    log_command_status(filename, command_datetime, first_time=True)
-                    last_logged[filename] = current_datetime
-                    last_hourly_log[filename] = current_datetime  # Initialize hourly log
+                if (askBluetooth and fn_wait_for_user_input(60, "An error occuring during last Action, do you want to reconnect to bluetooth or continue ?\nThe program will contine if you don't press CTRL-C within 60 seconds:" ))  == 1:
+                    log.notice('continuing ....')
+                elif askBluetooth:
+                    start_connection(True)
                 else:
-                    # Check for hourly log
-                    if current_datetime - last_hourly_log[filename] >= timedelta(hours=1):
-                        log_command_status(filename, command_datetime, interval="Hourly")
-                        last_hourly_log[filename] = current_datetime  # Update last hourly log
+                    log.notice('continuing ....')
+                pass
 
-                    # Check for 30 minutes, 15 minutes, and 5 minutes before execution
-                    time_intervals = {
-                        '5 minutes': timedelta(minutes=5),
-                        '15 minutes': timedelta(minutes=15),
-                        '30 minutes': timedelta(minutes=30)
-                    }
-                    
-                    for interval, delta in time_intervals.items():
-                        # Check if the time until the command execution exceeds the interval
-                        if command_datetime - current_datetime <= delta:
-                            # Only log if we haven't logged this interval yet
-                            if filename not in last_logged or last_logged[filename] != interval:
-                                log_command_status(filename, command_datetime, interval)
-                                last_logged[filename] = interval  # Update last logged interval
-                            break  # Break to avoid logging multiple times for the same interval
+        # Log Ignore time
+        elif command.get('process', 'wait') == 'wait':
+            # Get current date and time
+            current_datetime = datetime.now()
+            command_datetime = get_time_to_execute(current_datetime, command)
+
+            # If the file isn't ready, log it based on the time since the last log
+            if filename not in last_logged:
+                # Log the first time
+                log_command_status(filename, command_datetime, first_time=True)
+                last_logged[filename] = current_datetime
+                last_hourly_log[filename] = current_datetime  # Initialize hourly log
+            else:
+                # Check for hourly log
+                if current_datetime - last_hourly_log[filename] >= timedelta(hours=1):
+                    log_command_status(filename, command_datetime, interval="Hourly")
+                    last_hourly_log[filename] = current_datetime  # Update last hourly log
+
+                # Check for 30 minutes, 15 minutes, and 5 minutes before execution
+                time_intervals = {
+                    '5 minutes': timedelta(minutes=5),
+                    '15 minutes': timedelta(minutes=15),
+                    '30 minutes': timedelta(minutes=30)
+                }
+                
+                for interval, delta in time_intervals.items():
+                    # Check if the time until the command execution exceeds the interval
+                    if command_datetime - current_datetime <= delta:
+                        # Only log if we haven't logged this interval yet
+                        if filename not in last_logged or last_logged[filename] != interval:
+                            log_command_status(filename, command_datetime, interval)
+                            last_logged[filename] = interval  # Update last logged interval
+                        break  # Break to avoid logging multiple times for the same interval
 
 
 def log_command_status(filename, command_datetime, interval=None, first_time=False):
@@ -353,7 +369,7 @@ def start_connection(startSTA = False, use_web_page = False):
         # python script running
         log.info("local bluetooth connection")
         if use_web_page:
-            result = connect_bluetooth()
+            result = connect_bluetooth() 
 
         else:
             ble_psd = read_bluetooth_ble_psd() or "DWARF_12345678"

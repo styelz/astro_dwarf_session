@@ -1,11 +1,18 @@
+
 import sys
 import dwarf_python_api.lib.my_logger as log
 
-from dwarf_ble_connect.connect_bluetooth import connect_bluetooth
-from dwarf_ble_connect.lib.connect_direct_bluetooth import connect_ble_direct_dwarf, connect_ble_dwarf_win
-from dwarf_python_api.lib.dwarf_utils import read_bluetooth_ble_psd
-from dwarf_python_api.lib.dwarf_utils import read_bluetooth_ble_STA_ssid
-from dwarf_python_api.lib.dwarf_utils import read_bluetooth_ble_STA_pwd
+# Import Bluetooth connection functions with error handling
+try:
+    from dwarf_ble_connect.connect_bluetooth import connect_bluetooth
+    from dwarf_ble_connect.lib.connect_direct_bluetooth import connect_ble_direct_dwarf, connect_ble_dwarf_win
+    from dwarf_python_api.lib.dwarf_utils import read_bluetooth_ble_psd
+    from dwarf_python_api.lib.dwarf_utils import read_bluetooth_ble_STA_ssid
+    from dwarf_python_api.lib.dwarf_utils import read_bluetooth_ble_STA_pwd
+except ImportError as e:
+    log.error(f"Bluetooth import error: {e}")
+    print(f"Bluetooth import error: {e}")
+    sys.exit(1)
 
 def connect_bluetooth_web():
 
@@ -20,10 +27,10 @@ def connect_bluetooth_win(ble_psd, ble_STA_ssid, ble_STA_pwd):
     return connect_ble_dwarf_win(ble_psd, ble_STA_ssid, ble_STA_pwd)
 
 if __name__ == "__main__":
-
     # If command-line parameters are provided
     win = True
     cmd = False
+    auto_select = None  # Ensure auto_select is always defined
     ble_psd = read_bluetooth_ble_psd() or "DWARF_12345678"
     ble_STA_ssid = read_bluetooth_ble_STA_ssid() or ""
     ble_STA_pwd = read_bluetooth_ble_STA_pwd() or ""
@@ -32,12 +39,11 @@ if __name__ == "__main__":
     print("Wifi PSD:", ble_psd)
     print("Wifi STAT SSID:", ble_STA_ssid)
     if ble_STA_pwd:
-      print("Wifi STAT PWD: *******")
+        print("Wifi STAT PWD: *******")
     else:
-      print("Wifi STAT PWD: empty!")
+        print("Wifi STAT PWD: empty!")
 
     if len(sys.argv) > 1:
-        
         i = 1
         while i < len(sys.argv):
             if sys.argv[i] == "--cmd":
@@ -84,11 +90,12 @@ if __name__ == "__main__":
     print("Wifi PSD:", ble_psd)
     print("Wifi STAT SSID:", ble_STA_ssid)
     if ble_STA_pwd:
-      print("Wifi STAT PWD: *******")
+        print("Wifi STAT PWD: *******")
     else:
-      print("Wifi STAT PWD: empty!")
+        print("Wifi STAT PWD: empty!")
     print("##############")
 
+    # Platform-specific Bluetooth connection logic is expected in the imported modules
     if win:
         connect_bluetooth_win(ble_psd, ble_STA_ssid, ble_STA_pwd)
     elif cmd:

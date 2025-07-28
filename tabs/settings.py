@@ -120,7 +120,7 @@ def create_settings_tab(tab_settings, settings_vars):
         ("Help", "The following values are the default values use in the Create Session Tabs"),
         ("Exposure", "exposure"),
         ("Gain", "gain"),
-        ("Help IR Cut", "For D2 0: IR Cut 1: IR Pass  -  For D3 0: VIS  1: ASTRO 2: DUAL BAND."),
+        ("Help IR Cut", "For D2: 0=IR Cut 1=IR Pass, For D3: 0=VIS 1=ASTRO 2=DUAL BAND"),
         ("IR Cut", "ircut"),
         ("Help Binning", "0: 4k 1: 2k"),
         ("Binning", "binning"),
