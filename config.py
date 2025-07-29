@@ -1,6 +1,6 @@
 DWARF_IP = ""
 DWARF_ID = ""
-DWARF_UI = ""
+DWARF_UI = "Close"
 CLIENT_ID = "0000DAF2-0000-1000-8000-00805F9B34FB"
 # TIMEOUT_CMD for TimeOut deconnection (s) after not receiving command
 # none or ommited set by defaut to 30 minutes
