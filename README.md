@@ -26,50 +26,66 @@ Session files are JSON documents placed in the `./Astro_Sessions/ToDo/` director
 **Example JSON structure:**
 
 ```json
-{ 
-  "command" : {
-    "id_command" : {
-        "uuid" : "uuid",
-        "description": "text",
-        "date" : date,                      // "YYYY-MM-DD" minimun date to launch the processing, can be later if a processing is in progress
-        "time" : time,                      // "HH:MM:SS"
-        "process" : {wait, pending, ended}, // "wait" to be proccessed
-        "max_retries": 2,                   // maximun number of retries in case of errors
-        "result" : boolean,                 // result after processing
-        "message" : {...},                  // result message
-        "nb_try": 1,                        // number of tries done
-        "processed_date": date              // YYYY-MM-DD HH:MM:SS date of proccessing
-    }
-    "calibration" : {
-        "do_action" : false,                // true to do the action
-        "wait_before" : time_sec,
-        "wait_after" : time_sec
-    }
-    "goto_solar" :  {
-        "do_action" : false,
-        "target" : planet_name,
-        "wait_after" : time_sec
-    }
-    "goto_manual" :  {
-        "do_action" : false,
-        "target" : target_name,
-        "ra_coord" : ra_coord,              // decimal value or HH:MM:SS
-        "dec_coord" : dec_coord,            // decimal value or DD:MM:SS
-        "wait_after" : time_sec
-    }
-    "setup_camera" :  {
-        "do_action" : false,
-        "exposure" : exposure_strvalue,
-        "gain" : gain_strvalue,
-        "binning" : binning_val,            // "0": 4k - "1": 2k
-        "IRCut" : IRCut_val,                // For D2: "0"=IRCut, "1"=IRPass. For D3: "0"=VIS Filter, "1"=Astro Filter, "2"=DUAL BAND Filter
-        "count" : nb_image,
-        "wait_after" : time_sec
+<!--
+Field notes:
+- date: "YYYY-MM-DD" (minimum date to launch processing)
+- time: "HH:MM:SS"
+- process: "wait" | "pending" | "ended"
+- max_retries: integer (max retries on error)
+- result: boolean (result after processing)
+- message: object (result message)
+- nb_try: integer (number of tries)
+- processed_date: "YYYY-MM-DD HH:MM:SS" (date of processing)
+- calibration.wait_before/wait_after: seconds
+- goto_manual.ra_coord: decimal or "HH:MM:SS"
+- goto_manual.dec_coord: decimal or "DD:MM:SS"
+- setup_camera.binning: "0"=4k, "1"=2k
+- setup_camera.IRCut: D2: "0"=IRCut, "1"=IRPass; D3: "0"=VIS, "1"=Astro, "2"=DUAL BAND
+-->
+
+{
+  "command": {
+    "id_command": {
+      "uuid": "uuid",
+      "description": "text",
+      "date": "YYYY-MM-DD",
+      "time": "HH:MM:SS",
+      "process": "wait",
+      "max_retries": 2,
+      "result": false,
+      "message": {},
+      "nb_try": 1,
+      "processed_date": "YYYY-MM-DD HH:MM:SS"
+    },
+    "calibration": {
+      "do_action": false,
+      "wait_before": 0,
+      "wait_after": 0
+    },
+    "goto_solar": {
+      "do_action": false,
+      "target": "planet_name",
+      "wait_after": 0
+    },
+    "goto_manual": {
+      "do_action": false,
+      "target": "target_name",
+      "ra_coord": "HH:MM:SS",
+      "dec_coord": "DD:MM:SS",
+      "wait_after": 0
+    },
+    "setup_camera": {
+      "do_action": false,
+      "exposure": "exposure_strvalue",
+      "gain": "gain_strvalue",
+      "binning": "0",
+      "IRCut": "0",
+      "count": 1,
+      "wait_after": 0
     }
   }
 }
 ```
-
 ---
 
 ## ⚙️ Installation
