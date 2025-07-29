@@ -175,13 +175,21 @@ class TextHandler(logging.Handler):
 
 # GUI Application class
 class AstroDwarfSchedulerApp(tk.Tk):
+
     def __init__(self):
         super().__init__()
         self.title("Astro Dwarf Scheduler")
         self.geometry("800x800")
-        
-        # Create tabs
 
+        # --- Initialize all attributes used by methods before any method that uses them ---
+        self.scheduler_running = False
+        self.scheduler_stopped = True
+        self.unset_lock_device_mode = True
+        self.bluetooth_connected = False
+        self.result = False
+        self.stellarium_connection = None
+
+        # Create tabs
         self.tab_control = ttk.Notebook(self)
         self.tab_control.pack(expand=1, fill="both")
 
