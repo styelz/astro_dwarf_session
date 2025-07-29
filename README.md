@@ -29,42 +29,42 @@ Session files are JSON documents placed in the `./Astro_Sessions/ToDo/` director
 { 
   "command" : {
     "id_command" : {
-        "uuid" : "uuid";
-        "description": "text";
-        "date" : date;                      // "YYYY-MM-DD" minimun date to launch the processing, can be later if a processing is in progress
-        "time" : time;                      // "HH:MM:SS"
-        "process" : {wait, pending, ended}; // "wait" to be proccessed
+        "uuid" : "uuid",
+        "description": "text",
+        "date" : date,                      // "YYYY-MM-DD" minimun date to launch the processing, can be later if a processing is in progress
+        "time" : time,                      // "HH:MM:SS"
+        "process" : {wait, pending, ended}, // "wait" to be proccessed
         "max_retries": 2,                   // maximun number of retries in case of errors
-        "result" : boolean;                 // result after processing
-        "message" : {...};                  // result message
+        "result" : boolean,                 // result after processing
+        "message" : {...},                  // result message
         "nb_try": 1,                        // number of tries done
-        "processed_date": date;             // YYYY-MM-DD HH:MM:SS date of proccessing
+        "processed_date": date              // YYYY-MM-DD HH:MM:SS date of proccessing
     }
     "calibration" : {
-        "do_action" : false;                // true to do the action
-        "wait_before" : time_sec;
-        "wait_after" : time_sec;
+        "do_action" : false,                // true to do the action
+        "wait_before" : time_sec,
+        "wait_after" : time_sec
     }
     "goto_solar" :  {
-        "do_action" : false;
-        "target" : planet_name;
-        "wait_after" : time_sec;
+        "do_action" : false,
+        "target" : planet_name,
+        "wait_after" : time_sec
     }
     "goto_manual" :  {
-        "do_action" : false;
-        "target" : target_name;
-        "ra_coord" : ra_coord;              // decimal value or HH:MM:SS
-        "dec_coord" : dec_coord;            // decimal value or DD:MM:SS
-        "wait_after" : time_sec;
+        "do_action" : false,
+        "target" : target_name,
+        "ra_coord" : ra_coord,              // decimal value or HH:MM:SS
+        "dec_coord" : dec_coord,            // decimal value or DD:MM:SS
+        "wait_after" : time_sec
     }
     "setup_camera" :  {
-        "do_action" : false;
-        "exposure" : exposure_strvalue;
-        "gain" : gain_strvalue;
-        "binning" : binning_val;            // "0": 4k - "1": 2k
-        "IRCut" : IRCut_val;                // For D2: "0"=IRCut, "1"=IRPass. For D3: "0"=VIS Filter, "1"=Astro Filter, "2"=DUAL BAND Filter
-        "count" : nb_image;
-        "wait_after" : time_sec;
+        "do_action" : false,
+        "exposure" : exposure_strvalue,
+        "gain" : gain_strvalue,
+        "binning" : binning_val,            // "0": 4k - "1": 2k
+        "IRCut" : IRCut_val,                // For D2: "0"=IRCut, "1"=IRPass. For D3: "0"=VIS Filter, "1"=Astro Filter, "2"=DUAL BAND Filter
+        "count" : nb_image,
+        "wait_after" : time_sec
     }
   }
 }
