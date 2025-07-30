@@ -87,22 +87,41 @@ def save_config(config_data):
 
 # Create the settings tab
 def create_settings_tab(tab_settings, settings_vars):
+
     config = load_config()
-    # Create a Canvas and a Scrollbar for the settings
-    canvas = tk.Canvas(tab_settings)
-    scrollbar = ttk.Scrollbar(tab_settings, orient="vertical", command=canvas.yview)
+    # --- Modern scrollable frame setup ---
+    container = ttk.Frame(tab_settings)
+    container.grid(row=0, column=0, sticky='nsew')
+    tab_settings.grid_rowconfigure(0, weight=1)
+    tab_settings.grid_columnconfigure(0, weight=1)
+
+    canvas = tk.Canvas(container, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
     scrollable_frame = ttk.Frame(canvas)
 
-    scrollable_frame.bind(
-        "<Configure>",
-        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-    )
+    def _on_frame_configure(event):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        # Make the scrollable_frame width always match the canvas width
+        canvas_width = event.width
+        canvas.itemconfig("frame", width=canvas_width)
 
-    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    scrollable_frame.bind(
+        "<Configure>", _on_frame_configure
+    )
+    # Add a window with a tag so we can resize it
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", tags="frame")
     canvas.configure(yscrollcommand=scrollbar.set)
 
-    scrollbar.pack(side="right", fill="y")
-    canvas.pack(side="left", fill="both", expand=True)
+    def _on_canvas_configure(event):
+        # Set the inner frame's width to the canvas width
+        canvas.itemconfig("frame", width=event.width)
+
+    canvas.bind('<Configure>', _on_canvas_configure)
+
+    canvas.grid(row=0, column=0, sticky="nsew")
+    scrollbar.grid(row=0, column=1, sticky="ns")
+    container.grid_rowconfigure(0, weight=1)
+    container.grid_columnconfigure(0, weight=1)
 
     settings_fields = [
         ("Your Address", "address"),
@@ -115,8 +134,8 @@ def create_settings_tab(tab_settings, settings_vars):
         ("BLE STA SSID", "ble_sta_ssid"),
         ("BLE STA Password", "ble_sta_pwd"),
         ("Help", "Use to Connect to Stellarium, let them blank if you are using default config"),
-        ("Stellarium IP", "stellarium_ip"),  # New field for Stellarium IP
-        ("Stellarium Port", "stellarium_port"),  # New field for Stellarium Port
+        ("Stellarium IP", "stellarium_ip"),
+        ("Stellarium Port", "stellarium_port"),
         ("Help", "The following values are the default values use in the Create Session Tabs"),
         ("Exposure", "exposure"),
         ("Gain", "gain"),
@@ -127,38 +146,37 @@ def create_settings_tab(tab_settings, settings_vars):
         ("Count", "count")
     ]
 
+    # Add location button at the top
     location_button = tk.Button(scrollable_frame, text="Find your location data from your address or Enter them manually", command=lambda: find_location(settings_vars))
-    location_button.pack(pady=20)
+    location_button.grid(row=0, column=0, columnspan=2, pady=(15, 15), padx=10, sticky='ew')
 
+    grid_row = 1
     for field, key in settings_fields:
-        row = tk.Frame(scrollable_frame)
-        label = tk.Label(row, width=15, text=field, anchor='w')
-        row.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-        label.pack(side=tk.LEFT)
         index = key.find("http")
-
         if not "Help" in field:
-            var = tk.StringVar(value=config.get(key, ''))  # Load the value from config.ini
-            entry = tk.Entry(row, textvariable=var)
-            settings_vars[key] = var  # Store variable for later use
-            entry.pack(side=tk.RIGHT, expand=tk.YES, fill=tk.X)
-        elif index != -1: # Create a label that looks like a hyperlink
+            label = tk.Label(scrollable_frame, width=22, text=field, anchor='e')
+            var = tk.StringVar(value=config.get(key, ''))
+            entry = tk.Entry(scrollable_frame, textvariable=var)
+            settings_vars[key] = var
+            label.grid(row=grid_row, column=0, sticky='e', padx=(10,6), pady=4)
+            entry.grid(row=grid_row, column=1, sticky='ew', padx=(0,14), pady=4)
+            scrollable_frame.grid_columnconfigure(1, weight=1)
+        elif index != -1:
             url = key[index:].strip()
-            print (url)
-            link_label = tk.Label(row, text=key[:index], fg="blue", cursor="hand2", anchor='w')
-            link_label.pack(side=tk.RIGHT, expand=tk.YES, fill=tk.X)
-
-            # Make the text underlined
+            link_label = tk.Label(scrollable_frame, text=key[:index], fg="blue", cursor="hand2", anchor='w')
+            # Align the link label to the data entry column
+            link_label.grid(row=grid_row, column=1, sticky='w', padx=(0,14), pady=4)
             link_label.config(font=("Arial", 12, "underline"))
-
-            # Bind the click event to the open_link function
-            link_label.bind("<Button-1>", lambda e: open_link(url))
+            link_label.bind("<Button-1>", lambda e, url=url: open_link(url))
         else:
-            help_Label = tk.Label(row, width=60, text=key, anchor='w')
-            help_Label.pack(side=tk.RIGHT, expand=tk.YES, fill=tk.X)
+            help_Label = tk.Label(scrollable_frame, width=60, text=key, anchor='w', fg="#555")
+            # Align the help label to the data entry column
+            help_Label.grid(row=grid_row, column=1, sticky='w', padx=(0,14), pady=4)
+        grid_row += 1
 
+    # Save button at the bottom
     save_button = tk.Button(scrollable_frame, text="Save", command=lambda: save_settings(settings_vars))
-    save_button.pack(pady=20)
+    save_button.grid(row=grid_row, column=0, columnspan=2, pady=20, padx=10, sticky='ew')
 
 def save_settings(settings_vars):
     config_data = {key: var.get() for key, var in settings_vars.items()}

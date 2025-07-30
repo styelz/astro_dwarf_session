@@ -6,31 +6,43 @@ from tkinter import messagebox
 
 from astro_dwarf_scheduler import LIST_ASTRO_DIR_DEFAULT
 
-def overview_session_tab(parent_frame):
-    """Initializes the session overview tab."""
+def overview_session_tab(parent_frame, refresh_setter=None):
+    """Initializes the session overview tab. Optionally registers a refresh function for external use."""
+    # Use grid layout for resizable content and sticky buttons
+    parent_frame.grid_rowconfigure(1, weight=0)  # label
+    parent_frame.grid_rowconfigure(2, weight=0)  # listbox
+    parent_frame.grid_rowconfigure(3, weight=1)  # text area (expandable)
+    parent_frame.grid_rowconfigure(4, weight=0)  # buttons
+    parent_frame.grid_columnconfigure(0, weight=1)
+
     # JSON session management section
     json_label = tk.Label(parent_frame, text="Available Sessions:", font=("Arial", 12))
-    json_label.pack(pady=5)
-    
+    json_label.grid(row=1, column=0, sticky="ew", pady=(5,0))
     # Listbox to show available JSON files
     json_listbox = tk.Listbox(parent_frame, height=13, selectmode=tk.EXTENDED)
-    json_listbox.pack(fill=tk.BOTH, padx=10, pady=5)
+    json_listbox.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+    # Text area to display JSON file content (resizable)
+    json_text = tk.Text(parent_frame, state=tk.DISABLED)
+    json_text.grid(row=3, column=0, sticky="nsew", padx=10, pady=5)
     json_listbox.bind('<<ListboxSelect>>', lambda event: on_json_select(event, json_listbox, json_text))
-    
-    # Text area to display JSON file content
-    json_text = tk.Text(parent_frame, height=24, state=tk.DISABLED)
-    json_text.pack(fill=tk.BOTH, padx=10, pady=5)
-    
-    # Button to select the session
-    select_button = tk.Button(parent_frame, text="Select Session", command=lambda: select_session(json_listbox, json_text, select_button), state=tk.NORMAL)
-    select_button.pack(pady=20)
-    
-    # Button to refresh the JSON list
-    refresh_button = tk.Button(parent_frame, text="Refresh JSON List", command=lambda: populate_json_list(json_listbox))
-    refresh_button.pack(pady=5)
-
+    # --- Place Select Session and Refresh JSON List buttons on the same line, always at the bottom ---
+    button_frame = tk.Frame(parent_frame)
+    button_frame.grid(row=4, column=0, sticky="ew", pady=10)
+    # Center the buttons using an internal frame with pack and expand
+    inner_button_frame = tk.Frame(button_frame)
+    inner_button_frame.pack(expand=True)
+    select_button = tk.Button(inner_button_frame, text="Select Session", command=lambda: select_session(json_listbox, json_text, select_button), state=tk.NORMAL)
+    select_button.pack(side="left", padx=(0, 10))
+    def refresh_json_list():
+        populate_json_list(json_listbox)
+    refresh_button = tk.Button(inner_button_frame, text="Refresh JSON List", command=refresh_json_list)
+    refresh_button.pack(side="left")
     # Populate JSON list
-    populate_json_list(json_listbox)
+    refresh_json_list()
+    # Register the refresh function for external use
+    if refresh_setter is not None:
+        refresh_setter(refresh_json_list)
+    return refresh_json_list
 
 def populate_json_list(json_listbox):
     """Populates the listbox with JSON files from the Astro_Sessions folder."""
@@ -67,16 +79,17 @@ def populate_json_list(json_listbox):
     for key, info in subdirs.items():
         dirpath = info['path']
         label = info['label']
-        for fname in os.listdir(dirpath) if os.path.exists(dirpath) else []:
-            if fname.endswith('.json'):
-                fpath = os.path.join(dirpath, fname)
-                try:
-                    with open(fpath, 'r') as f:
-                        data = json.load(f)
-                    uuid = data.get('command', {}).get('id_command', {}).get('uuid', '')
-                except Exception:
-                    uuid = ''
-                files_with_origin.append((uuid, fname, dirpath, label, info['color'], info['font']))
+        if os.path.exists(dirpath):
+            for fname in os.listdir(dirpath):
+                if fname.endswith('.json'):
+                    fpath = os.path.join(dirpath, fname)
+                    try:
+                        with open(fpath, 'r') as f:
+                            data = json.load(f)
+                        uuid = data.get('command', {}).get('id_command', {}).get('uuid', '')
+                    except Exception:
+                        uuid = ''
+                    files_with_origin.append((uuid, fname, dirpath, label, info['color'], info['font']))
     # Sort all by uuid (empty uuid last)
     files_with_origin.sort(key=lambda x: (x[0] == '', x[0]))
     # Insert into listbox and build mapping

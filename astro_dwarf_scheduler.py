@@ -192,12 +192,14 @@ def update_process_status(program, status, result=None, message=None, nb_try=Non
     command['processed_date'] = current_datetime
     return program  # Return the updated entire program object
 
-def retry_procedure(program, max_retries =3):
+def retry_procedure(program, max_retries=3, stop_event=None):
     attempt = 0
     while attempt < max_retries:
+        if stop_event is not None and stop_event.is_set():
+            raise Exception("Session interrupted by user.")
         try:
             # Execute the session
-            start_dwarf_session(program['command'])
+            start_dwarf_session(program['command'], stop_event=stop_event)
             return attempt + 1
         except Exception as e:
             attempt += 1
@@ -231,9 +233,11 @@ def get_json_files_sorted_by_uuid(directory):
     return [fname for uuid, fname in files_with_uuid]
 
 # Main function to check and execute the commands
-def check_and_execute_commands(askBluetooth = False):
+def check_and_execute_commands(askBluetooth = False, stop_event=None):
     global LIST_ASTRO_DIR
     for filename in get_json_files_sorted_by_uuid(LIST_ASTRO_DIR["TODO_DIR"]):
+        if stop_event is not None and stop_event.is_set():
+            return
         filepath = os.path.join(LIST_ASTRO_DIR["TODO_DIR"], filename)
         program = load_json(filepath)
         if program is False:
@@ -285,7 +289,7 @@ def check_and_execute_commands(askBluetooth = False):
                     dwarf_id = data_config['dwarf_id']
                 # Execute the session
                 max_retries = int(program['command']['id_command'].get('max_retries', 3))
-                nb_try = retry_procedure(program)
+                nb_try = retry_procedure(program, max_retries, stop_event=stop_event)
 
                 # If successful, update process and result
                 program = update_process_status(program, 'ended', True, "Action completed successfully.", nb_try, dwarf_id)

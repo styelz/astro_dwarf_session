@@ -1,3 +1,4 @@
+
 import os
 import shutil
 import time
@@ -7,6 +8,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from astro_dwarf_scheduler import check_and_execute_commands, start_connection, start_STA_connection, setup_new_config
 from dwarf_python_api.lib.dwarf_utils import perform_disconnect, unset_HostMaster, set_HostMaster, start_polar_align, motor_action
+import signal
 
 # import data for config.py
 import dwarf_python_api.get_config_data
@@ -184,6 +186,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         # --- Initialize all attributes used by methods before any method that uses them ---
         self.scheduler_running = False
         self.scheduler_stopped = True
+        self.scheduler_stop_event = threading.Event()
         self.unset_lock_device_mode = True
         self.bluetooth_connected = False
         self.result = False
@@ -198,17 +201,19 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.tab_overview_session = ttk.Frame(self.tab_control)
         self.tab_result_session = ttk.Frame(self.tab_control)
         self.tab_create_session = ttk.Frame(self.tab_control)
-        self.tab_load_session = ttk.Frame(self.tab_control)
+        self.tab_edit_sessions = ttk.Frame(self.tab_control)
 
         self.tab_control.add(self.tab_main, text="Main")
         self.tab_control.add(self.tab_settings, text="Settings")
         self.tab_control.add(self.tab_overview_session, text="Session Overview")
         self.tab_control.add(self.tab_result_session, text="Results Session")
         self.tab_control.add(self.tab_create_session, text="Create Session")
-        self.tab_control.add(self.tab_load_session, text="Edit Sessions")
+        self.tab_control.add(self.tab_edit_sessions, text="Edit Sessions")
 
         self.refresh_results = None
         self.create_main_tab()
+        # Ensure file counts are updated on startup
+        self.update_session_counts()
         self.settings_vars = {}
         self.config_vars = {}
         settings.create_settings_tab(self.tab_settings, self.config_vars)
@@ -216,12 +221,9 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.overview_refresh = None
         self.edit_sessions_refresh = None
         # Setup overview tab and capture refresh
-        def overview_tab_wrapper(parent):
-            # Patch overview_session_tab to capture the refresh function
-            result = overview_session.overview_session_tab(parent)
-            if callable(result):
-                self.overview_refresh = result
-        overview_tab_wrapper(self.tab_overview_session)
+        def set_overview_refresh(refresh_func):
+            self.overview_refresh = refresh_func
+        overview_session.overview_session_tab(self.tab_overview_session, set_overview_refresh)
         # Add the tab's content and capture the refresh function
         self.refresh_results = result_session.result_session_tab(self.tab_result_session)
         create_session.create_session_tab(self.tab_create_session, self.settings_vars, self.config_vars)
@@ -230,7 +232,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         def edit_sessions_tab_wrapper():
             from astro_dwarf_scheduler import LIST_ASTRO_DIR
             session_dir = LIST_ASTRO_DIR["SESSIONS_DIR"]
-            result = edit_sessions.edit_sessions_tab(self.tab_load_session, session_dir)
+            result = edit_sessions.edit_sessions_tab(self.tab_edit_sessions, session_dir)
             if callable(result):
                 self.edit_sessions_refresh = result
         edit_sessions_tab_wrapper()
@@ -238,10 +240,12 @@ class AstroDwarfSchedulerApp(tk.Tk):
         # Bind tab change event to refresh file lists
         def on_tab_changed(event):
             tab = event.widget.tab(event.widget.index('current'))['text']
-            if tab == 'Session Overview' and self.overview_refresh:
-                self.overview_refresh()
-            elif tab == 'Edit Sessions' and self.edit_sessions_refresh:
-                self.edit_sessions_refresh()
+            # Always refresh both lists when either tab is selected
+            if tab in ('Session Overview', 'Edit Sessions'):
+                if self.overview_refresh:
+                    self.overview_refresh()
+                if self.edit_sessions_refresh:
+                    self.edit_sessions_refresh()
         self.tab_control.bind('<<NotebookTabChanged>>', on_tab_changed)
 
 
@@ -343,6 +347,9 @@ class AstroDwarfSchedulerApp(tk.Tk):
         # Call the refresh function directly
         if self.refresh_results:
             self.refresh_results()
+        # Always update file counts after refresh
+        if hasattr(self, 'update_session_counts'):
+            self.update_session_counts()
 
     def show_current_config(self, config_name, created = False):
         from astro_dwarf_scheduler import LIST_ASTRO_DIR
@@ -357,6 +364,9 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.log(f"  Session directory is : '{LIST_ASTRO_DIR['SESSIONS_DIR']}'.")
 
         self.refresh_data()
+        # Always update file counts after config change
+        if hasattr(self, 'update_session_counts'):
+            self.update_session_counts()
 
     def disable_controls(self):
         """Disable the checkbox and Add button."""
@@ -454,20 +464,68 @@ class AstroDwarfSchedulerApp(tk.Tk):
 
         self.polar_button = tk.Button(scheduler_frame, text="Polar Position", command=self.start_polar_position, state=tk.DISABLED, width=16)
         self.polar_button.grid(row=0, column=4, padx=5)
-        
+
         # Log text area
         # Use a font that supports emoji, e.g., Segoe UI Emoji on Windows
         emoji_font = ("Segoe UI Emoji", 10)
         self.log_text = tk.Text(self.tab_main, wrap=tk.WORD, height=15, font=emoji_font)
         self.log_text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-        # Add Clear Log button
-        clear_log_btn = tk.Button(self.tab_main, text="Clear Log", command=self.clear_log_output)
-        clear_log_btn.pack(padx=10, pady=(0,10), anchor="e")
+        # --- Astro Sessions file counts summary (one line, colored, correct count) ---
+        # Use colors from overview_session.py
+        folder_colors = {
+            'ToDo': 'blue',
+            'Current': 'purple',
+            'Done': 'green',
+            'Error': 'red',
+            'Results': 'gray',
+        }
+        from astro_dwarf_scheduler import LIST_ASTRO_DIR
+        sessions_dir = LIST_ASTRO_DIR['SESSIONS_DIR']
+        # Place file counts and clear log button in a horizontal frame just below the output window
+        bottom_frame = tk.Frame(self.tab_main)
+        bottom_frame.pack(fill="x", padx=10, pady=(0,10))
+        # File counts (left)
+        summary_frame = tk.Frame(bottom_frame)
+        summary_frame.pack(side="left", anchor="w")
+        tk.Label(summary_frame, text="Astro Sessions", font=("Arial", 10)).pack(side="left")
+        self.session_count_labels = {}
+        for folder, color in folder_colors.items():
+            folder_path = os.path.join(sessions_dir, folder)
+            try:
+                count = len([
+                    f for f in os.listdir(folder_path)
+                    if os.path.isfile(os.path.join(folder_path, f)) and not f.startswith('.')
+                ])
+            except Exception:
+                count = 0
+            lbl = tk.Label(summary_frame, text=f" {folder}: {count}", fg=color, font=("Arial", 10))
+            lbl.pack(side="left")
+            self.session_count_labels[folder] = lbl
+        # Clear Log button (right)
+        clear_log_btn = tk.Button(bottom_frame, text="Clear Log", command=self.clear_log_output)
+        clear_log_btn.pack(side="right", padx=0)
+
+        # Add a method to update the counts (can be called after file changes)
+        def update_session_counts():
+            for folder, color in folder_colors.items():
+                folder_path = os.path.join(sessions_dir, folder)
+                try:
+                    count = len([
+                        f for f in os.listdir(folder_path)
+                        if os.path.isfile(os.path.join(folder_path, f)) and not f.startswith('.')
+                    ])
+                except Exception:
+                    count = 0
+                self.session_count_labels[folder].config(text=f" {folder}: {count}")
+        self.update_session_counts = update_session_counts
     def clear_log_output(self):
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete(1.0, tk.END)
         self.log_text.config(state=tk.NORMAL)
+        # Update file counts in case log clearing is related to session changes
+        if hasattr(self, 'update_session_counts'):
+            self.update_session_counts()
 
     def start_bluetooth(self):
         self.disable_controls()
@@ -500,6 +558,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.disable_controls()
         if not self.scheduler_running:
             self.scheduler_running = True
+            self.scheduler_stop_event.clear()
             self.start_logHandler()
             self.start_button.config(state=tk.DISABLED)
             self.stop_button.config(state=tk.NORMAL)
@@ -509,11 +568,15 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.log("Astro_Dwarf_Scheduler is starting...")
             self.scheduler_thread = threading.Thread(target=self.run_scheduler)
             self.scheduler_thread.start()
+        # Update file counts when scheduler starts
+        if hasattr(self, 'update_session_counts'):
+            self.update_session_counts()
 
     def stop_scheduler(self):
         self.stop_logHandler()
         if self.scheduler_running:
             self.scheduler_running = False
+            self.scheduler_stop_event.set()
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
             self.unlock_button.config(state=tk.DISABLED)
@@ -529,6 +592,9 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.polar_button.config(state=tk.DISABLED)
             self.log("Scheduler is stopped")
             self.enable_controls()
+        # Update file counts when scheduler stops
+        if hasattr(self, 'update_session_counts'):
+            self.update_session_counts()
 
     def unset_lock_device(self):
         self.scheduler_thread = threading.Thread(target=self.run_unset_lock_device)
@@ -562,14 +628,18 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.scheduler_stopped = False
             attempt = 0
             result = False
-            while not result and attempt < 3 and self.scheduler_running:
+            while not result and attempt < 3 and self.scheduler_running and not self.scheduler_stop_event.is_set():
                 attempt += 1
                 result = start_STA_connection(not self.bluetooth_connected)
             if result:
                 self.log("Connected to the Dwarf")
-            while result and self.scheduler_running:
-                check_and_execute_commands()
-                time.sleep(10)  # Sleep for 10 seconds between checks
+            while result and self.scheduler_running and not self.scheduler_stop_event.is_set():
+                check_and_execute_commands(stop_event=self.scheduler_stop_event)
+                # Instead of sleeping for 10 seconds, check every 0.1s if stopped
+                total_sleep = 0
+                while total_sleep < 10 and self.scheduler_running and not self.scheduler_stop_event.is_set():
+                    time.sleep(0.1)
+                    total_sleep += 0.1
         except KeyboardInterrupt:
             self.log("Operation interrupted by the user.")
         finally:
@@ -591,27 +661,29 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 if not result:
                     time.sleep(10)  # Sleep for 10 seconds between checks
             if result:
-                if self.unset_lock_device_mode:
-                    self.unlock_button.config(text="Set Device as Host")
-                else:
-                    self.unlock_button.config(text="Unset Device as Host")
-                self.unset_lock_device_mode = not self.unset_lock_device_mode
-                self.unlock_button.update()
-        except KeyboardInterrupt:
-            self.log("Operation interrupted by the user.")
+                def update_unlock_button():
+                    if self.unset_lock_device_mode:
+                        self.unlock_button.config(text="Set Device as Host")
+                    else:
+                        self.unlock_button.config(text="Unset Device as Host")
+                    self.unset_lock_device_mode = not self.unset_lock_device_mode
+                    self.unlock_button.update()
+                self.after(0, update_unlock_button)
+        except Exception as e:
+            self.after(0, lambda: self.log(f"Error in unset_lock_device: {e}", level="error"))
 
     def run_start_eq_solving(self):
         try:
             attempt = 0
             result = False
-            self.log("Starting EQ Solving process...")
+            self.after(0, lambda: self.log("Starting EQ Solving process..."))
             while not result and attempt < 3:
                 attempt += 1
                 result = start_polar_align()
                 if not result:
                     time.sleep(10)  # Sleep for 10 seconds between checks
-        except KeyboardInterrupt:
-            self.log("Operation interrupted by the user.")
+        except Exception as e:
+            self.after(0, lambda: self.log(f"Error in EQ Solving: {e}", level="error"))
 
     def run_start_polar_position(self):
         try:
@@ -622,7 +694,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
 
             attempt = 0
             result = False
-            self.log("Starting Polar Align positionning...")
+            self.after(0, lambda: self.log("Starting Polar Align positionning..."))
             while not result and attempt < 1:
                 attempt += 1
                 # Rotation Motor Resetting
@@ -644,11 +716,11 @@ class AstroDwarfSchedulerApp(tk.Tk):
                      result = motor_action(3)
 
                 if result:
-                     self.log("Success Polar Align positionning")
+                     self.after(0, lambda: self.log("Success Polar Align positionning"))
                 if not result:
                     time.sleep(10)  # Sleep for 10 seconds between checks
-        except KeyboardInterrupt:
-            self.log("Operation interrupted by the user.")
+        except Exception as e:
+            self.after(0, lambda: self.log(f"Error in Polar Align positionning: {e}", level="error"))
 
     def start_logHandler(self):
 
@@ -663,9 +735,9 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.logger.addHandler(self.text_handler)
 
     def stop_logHandler(self):
-
         self.logger.info("Removing L...")
-        self.logger.removeHandler(self.text_handler)  # Remove the TextHandler
+        if hasattr(self, 'text_handler') and self.text_handler in self.logger.handlers:
+            self.logger.removeHandler(self.text_handler)  # Remove the TextHandler
 
     def log(self, message, level="info"):
         # Add color and emoji for direct log calls
@@ -692,4 +764,14 @@ class AstroDwarfSchedulerApp(tk.Tk):
 # Main application
 if __name__ == "__main__":
     app = AstroDwarfSchedulerApp()
-    app.mainloop()
+
+    def handler(sig, frame):
+        print("\nExiting Astro Dwarf Scheduler.")
+        app.quit()
+
+    signal.signal(signal.SIGINT, handler)
+    try:
+        app.mainloop()
+    except KeyboardInterrupt:
+        # This is a fallback, but the handler should catch Ctrl+C
+        print("\nExiting Astro Dwarf Scheduler.")

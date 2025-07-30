@@ -119,8 +119,10 @@ def try_attemps (function, function_succeed_message, max_attempts = 3):
 
     return continue_action
 
-def start_dwarf_session(program, type_dwarf = 3):
+def start_dwarf_session(program, type_dwarf = 3, stop_event=None):
     try:
+        def interrupted():
+            return stop_event is not None and stop_event.is_set()
         data_config = dwarf_python_api.get_config_data.get_config_data()
         dwarf_id = "3"  # Default Dwarf ID
         if data_config["dwarf_id"]:
@@ -227,79 +229,112 @@ def start_dwarf_session(program, type_dwarf = 3):
 
         if auto_focus:
             wait_before = program.get('auto_focus', {}).get('wait_before', 0)
+            if interrupted(): return
             time.sleep(wait_before)
+            if interrupted(): return
             log.notice("Processing automatic autofocus")
             continue_action = perform_start_autofocus(False)
+            if interrupted(): return
             verify_action(continue_action, "step_1c")
             wait_after = program.get('auto_focus', {}).get('wait_after', 0)
+            if interrupted(): return
             time.sleep(wait_after)
+            if interrupted(): return
 
         if infinite_focus:
             wait_before = program.get('infinite_focus', {}).get('wait_before', 0)
+            if interrupted(): return
             time.sleep(wait_before)
+            if interrupted(): return
             log.notice("Processing infinite autofocus")
             continue_action = perform_start_autofocus(True)
+            if interrupted(): return
             verify_action(continue_action, "step_1d")
             wait_after = program.get('infinite_focus', {}).get('wait_after', 0)
+            if interrupted(): return
             time.sleep(wait_after)
+            if interrupted(): return
 
         # Execution of specific actions
         if eq_solving:
             continue_action = perform_stop_goto()
+            if interrupted(): return
             verify_action(continue_action, "step_6")
+            if interrupted(): return
             time.sleep(5)
-
+            if interrupted(): return
             wait_before = program.get('eq_solving', {}).get('wait_before', 0)
+            if interrupted(): return
             time.sleep(wait_before)
+            if interrupted(): return
             log.notice("Processing EQ Solving")
             continue_action = start_polar_align()
+            if interrupted(): return
             verify_action(continue_action, "step_1b")
             wait_after = program.get('eq_solving', {}).get('wait_after', 0)
+            if interrupted(): return
             time.sleep(wait_after)
+            if interrupted(): return
 
         if calibration:
             log.notice("Processing Calibration")
             log.notice("    Set Exposure to 1s")
             continue_action = perform_update_camera_setting("exposure", "1")
+            if interrupted(): return
             verify_action(continue_action, "step_2")
-
+            if interrupted(): return
             log.notice("    Set Gain to 80")
             continue_action = perform_update_camera_setting("gain", "80")
+            if interrupted(): return
             verify_action(continue_action, "step_3")
-
+            if interrupted(): return
             if dwarf_id == "3":
                 log.notice("    Set IR to Astro Filter")
             else:
                 log.notice("    Set IR to IR_PASS")
             continue_action = perform_update_camera_setting("IR", "1")
+            if interrupted(): return
             verify_action(continue_action, "step_4")
-
+            if interrupted(): return
             log.notice("    Set Binning to 4k")
             continue_action = perform_update_camera_setting("binning", "0")
+            if interrupted(): return
             verify_action(continue_action, "step_5")
-
+            if interrupted(): return
             # check value
             time.sleep(5)
+            if interrupted(): return
             print_camera_data()
-
+            if interrupted(): return
             continue_action = perform_stop_goto()
+            if interrupted(): return
             verify_action(continue_action, "step_6")
+            if interrupted(): return
             time.sleep(5)
-
+            if interrupted(): return
             log.notice("Starting Calibration")
             wait_before = program.get('calibration', {}).get('wait_before', 0)
+            if interrupted(): return
             time.sleep(wait_before)
+            if interrupted(): return
             continue_action = perform_calibration()
+            if interrupted(): return
             verify_action(continue_action, "step_7")
             wait_after = program.get('calibration', {}).get('wait_after', 0)
+            if interrupted(): return
             time.sleep(wait_after)
+            if interrupted(): return
 
         if goto_solar:
             log.notice(f"Processing Goto Solar System : {target_name}")
             continue_action = select_solar_target(target_name)
+            if interrupted(): return
             wait_after = program.get('goto_solar', {}).get('wait_after', 0)
+            if interrupted(): return
             time.sleep(wait_after)
+            if interrupted(): return
             verify_action(continue_action, "step_8")
+            if interrupted(): return
 
         if goto_manual:
             log.notice(f"Processing Goto : {target_name}")
@@ -314,65 +349,91 @@ def start_dwarf_session(program, type_dwarf = 3):
                 decimal_Dec = parse_dec_to_float(manual_declination)
 
             continue_action = perform_goto(decimal_RA, decimal_Dec, target_name)
+            if interrupted(): return
             wait_after = program.get('goto_manual', {}).get('wait_after', 0)
+            if interrupted(): return
             time.sleep(wait_after)
+            if interrupted(): return
             verify_action(continue_action, "step_9")
+            if interrupted(): return
 
         if take_photo:
             log.notice(f"Processing Astro Photo Session : {count_val} images")
             if exp_val:
                 continue_action = perform_update_camera_setting("exposure", exp_val, dwarf_id)
+            if interrupted(): return
             if gain_val:
                 continue_action = perform_update_camera_setting("gain", gain_val, dwarf_id)
+            if interrupted(): return
             if IR_val:
                 continue_action = perform_update_camera_setting("IR", IR_val)
+            if interrupted(): return
             if binning_val:
                 continue_action = perform_update_camera_setting("binning", binning_val)
+            if interrupted(): return
             if count_val:
                 continue_action = perform_update_camera_setting("count", count_val)
-
+            if interrupted(): return
             # check value
             time.sleep(5)
+            if interrupted(): return
             print_camera_data()
-
+            if interrupted(): return
             wait_after = program.get('setup_camera', {}).get('wait_after', 0)
+            if interrupted(): return
             time.sleep(wait_after)
+            if interrupted(): return
             verify_action(continue_action, "step_10")
-
+            if interrupted(): return
             time.sleep(2)
+            if interrupted(): return
             continue_action = perform_takeAstroPhoto()
+            if interrupted(): return
             verify_action(continue_action, "step_11")
-
+            if interrupted(): return
             time.sleep(2)
+            if interrupted(): return
             # try multiple time due to timeout errors during waiting end of session
             continue_action = try_attemps (perform_waitEndAstroPhoto, "", 5)
+            if interrupted(): return
             verify_action(continue_action, "step_12")
+            if interrupted(): return
 
         if take_widephoto:
             log.notice(f"Processing Astro Wide Photo Session : {count_val} images")
             if wide_exp_val:
                 continue_action = perform_update_camera_setting("wide_exposure", wide_exp_val, dwarf_id)
+            if interrupted(): return
             if wide_gain_val:
                 continue_action = perform_update_camera_setting("wide_gain", wide_gain_val, dwarf_id)
+            if interrupted(): return
             if count_val:
                 continue_action = perform_update_camera_setting("count", count_val)
-
+            if interrupted(): return
             # check value
             time.sleep(5)
+            if interrupted(): return
             print_wide_camera_data()
-
+            if interrupted(): return
             wait_after = program.get('setup_wide_camera', {}).get('wait_after', 0)
+            if interrupted(): return
             time.sleep(wait_after)
+            if interrupted(): return
             verify_action(continue_action, "step_13")
-
+            if interrupted(): return
             time.sleep(2)
+            if interrupted(): return
             continue_action = perform_takeAstroWidePhoto()
+            if interrupted(): return
             verify_action(continue_action, "step_14")
-
+            if interrupted(): return
             time.sleep(2)
+            if interrupted(): return
             # try multiple time due to timeout errors during waiting end of session
             continue_action = try_attemps (perform_waitEndAstroWidePhoto, "", 5)
+            if interrupted(): return
             verify_action(continue_action, "step_15")
+            if interrupted(): return
 
     except Exception as e:
         log.error(f"Error during session : {e}")

@@ -77,7 +77,27 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
         clear_form()
         row = 0
         id_cmd = data['command']['id_command']
-        tk.Label(form_frame, text="Session Info", font=("Arial", 11, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0,5))
+        # Add Reset button at the top
+        def reset_fields():
+            id_cmd['process'] = 'wait'
+            id_cmd['result'] = False
+            id_cmd['message'] = ''
+            id_cmd['nb_try'] = 1
+            # Update the form fields visually
+            entries[('id_command', 'process')].delete(0, tk.END)
+            entries[('id_command', 'process')].insert(0, 'wait')
+            entries[('id_command', 'result')].delete(0, tk.END)
+            entries[('id_command', 'result')].insert(0, 'False')
+            entries[('id_command', 'message')].delete(0, tk.END)
+            entries[('id_command', 'message')].insert(0, '')
+            entries[('id_command', 'nb_try')].delete(0, tk.END)
+            entries[('id_command', 'nb_try')].insert(0, '1')
+            save_json()
+
+        # Place the label on the left and the reset button on the right, same row
+        tk.Label(form_frame, text="Session Info", font=("Arial", 11, "bold")).grid(row=row, column=0, columnspan=1, sticky="w", pady=(0,5))
+        reset_btn = tk.Button(form_frame, text="Reset Session State", command=reset_fields, bg="#f0ad4e", fg="black")
+        reset_btn.grid(row=row, column=1, sticky="e", pady=(0,5), padx=(0,10))
         row += 1
         for key in ["uuid", "description", "date", "time", "process", "max_retries", "result", "message", "nb_try"]:
             tk.Label(form_frame, text=key+":").grid(row=row, column=0, sticky="e")
@@ -95,12 +115,20 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
             sub = data['command'].get(subcmd, {})
             for k, v in sub.items():
                 tk.Label(form_frame, text="    "+k+":").grid(row=row, column=0, sticky="e")
-                ent = tk.Entry(form_frame, width=40)
-                ent.insert(0, str(v))
-                ent.grid(row=row, column=1, sticky="w")
-                entries[(subcmd, k)] = ent
-                ent.bind('<FocusOut>', lambda e, s=subcmd, kk=k: save_json())
-                ent.bind('<Return>', lambda e, s=subcmd, kk=k: save_json())
+                if k == 'do_action':
+                    from tkinter import ttk
+                    combo = ttk.Combobox(form_frame, values=["True", "False"], width=37, state="readonly")
+                    combo.set("True" if v else "False")
+                    combo.grid(row=row, column=1, sticky="w")
+                    entries[(subcmd, k)] = combo
+                    combo.bind('<<ComboboxSelected>>', lambda e, s=subcmd, kk=k: save_json())
+                else:
+                    ent = tk.Entry(form_frame, width=40)
+                    ent.insert(0, str(v))
+                    ent.grid(row=row, column=1, sticky="w")
+                    entries[(subcmd, k)] = ent
+                    ent.bind('<FocusOut>', lambda e, s=subcmd, kk=k: save_json())
+                    ent.bind('<Return>', lambda e, s=subcmd, kk=k: save_json())
                 row += 1
 
     def on_select(event):
@@ -144,17 +172,22 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
         for subcmd in ["eq_solving", "auto_focus", "infinite_focus", "calibration", "goto_solar", "goto_manual", "setup_camera", "setup_wide_camera"]:
             sub = data['command'].get(subcmd, {})
             for k in sub.keys():
-                val = entries[(subcmd, k)].get()
-                if val.lower() in ['true', 'false']:
-                    val = val.lower() == 'true'
+                widget = entries[(subcmd, k)]
+                if k == 'do_action':
+                    val = widget.get()
+                    val = val == 'True'
                 else:
-                    try:
-                        if '.' in val:
-                            val = float(val)
-                        else:
-                            val = int(val)
-                    except:
-                        pass
+                    val = widget.get()
+                    if isinstance(val, str) and val.lower() in ['true', 'false']:
+                        val = val.lower() == 'true'
+                    else:
+                        try:
+                            if '.' in val:
+                                val = float(val)
+                            else:
+                                val = int(val)
+                        except:
+                            pass
                 sub[k] = val
         fpath = os.path.join(session_dir, fname)
         try:
