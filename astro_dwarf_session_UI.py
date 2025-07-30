@@ -519,6 +519,12 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     count = 0
                 self.session_count_labels[folder].config(text=f" {folder}: {count}")
         self.update_session_counts = update_session_counts
+
+        # --- Periodically update session counts every 10 seconds ---
+        def periodic_update_counts():
+            self.update_session_counts()
+            self.after(10000, periodic_update_counts)
+        periodic_update_counts()
     def clear_log_output(self):
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete(1.0, tk.END)
