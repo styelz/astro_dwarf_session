@@ -16,6 +16,51 @@ from dwarf_python_api.lib.data_wide_utils import allowed_wide_exposuresD3, allow
 from dwarf_python_api.lib.dwarf_utils import parse_ra_to_float
 from dwarf_python_api.lib.dwarf_utils import parse_dec_to_float
 
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from tkcalendar import DateEntry
+import json
+import os
+import datetime
+import re
+from fractions import Fraction
+import csv
+from stellarium_connection import StellariumConnection
+
+from dwarf_python_api.lib.data_utils import allowed_exposures, allowed_gains
+from dwarf_python_api.lib.data_wide_utils import allowed_wide_exposures, allowed_wide_gains
+from dwarf_python_api.lib.data_utils import allowed_exposuresD3, allowed_gainsD3
+from dwarf_python_api.lib.data_wide_utils import allowed_wide_exposuresD3, allowed_wide_gainsD3
+from dwarf_python_api.lib.dwarf_utils import parse_ra_to_float
+from dwarf_python_api.lib.dwarf_utils import parse_dec_to_float
+
+def convert_ra_to_hourdecimal(ra_str):
+    # If it's already a float, just return it
+    if isinstance(ra_str, float):
+        return ra_str
+    # Clean up the RA string to handle the format in the CSV
+    ra_str = str(ra_str).replace('h', '').replace("r", '').replace("'", '').replace('"', '').strip()
+    # If it's already a decimal, just return it
+    try:
+        return float(ra_str)
+    except ValueError:
+        pass
+
+    # Try to split by colon or space
+    if ':' in ra_str:
+        parts = ra_str.split(':')
+    else:
+        parts = ra_str.split()
+    # Pad with zeros if not enough parts
+    while len(parts) < 3:
+        parts.append('0')
+    try:
+        h, m, s = map(float, parts[:3])
+    except Exception:
+        # If still can't parse, return 0.0 as fallback
+        return 0.0
+    return h + m/60 + s/3600
+
 def list_available_names(instance):
     return [entry["name"] for entry in instance.values]
 
@@ -86,11 +131,23 @@ def create_form_fields(scrollable_frame, settings_vars, config_vars):
         widget.grid(row=row, column=1, sticky=sticky_widget, padx=(2,10), pady=pady)
         return label, widget
 
+
     row = 0
+    # Description field at the top
+    description_var = tk.StringVar()
+    if config_vars.get("description") is not None and config_vars["description"].get():
+        description_var.set(config_vars["description"].get())
+    settings_vars["description"] = description_var
+    add_row(row, "Description", tk.Entry(scrollable_frame, textvariable=description_var))
+    row += 1
+
     # Device Type
     device_var = tk.StringVar()
     device_dropdown = ttk.Combobox(scrollable_frame, textvariable=device_var)
     device_dropdown['values'] = ["Dwarf II", "Dwarf 3 Tele Lens", "Dwarf 3 Wide Lens"]
+    # Set default device type if not already set
+    if not device_var.get():
+        device_var.set(device_dropdown['values'][0])
     settings_vars["device_type"] = device_var
     add_row(row, "Device Type", device_dropdown)
     row += 1
@@ -154,6 +211,8 @@ def create_form_fields(scrollable_frame, settings_vars, config_vars):
         settings_vars["camera_type"] = camera_var
 
     device_dropdown.bind("<<ComboboxSelected>>", on_device_change)
+    # Ensure camera_type is set on form creation
+    on_device_change(None)
 
 def create_mutually_exclusive_checkboxes(parent, var1, var2, var3, label1, label2, label3):
     """Create two mutually exclusive checkboxes using boolean variables."""
@@ -269,13 +328,33 @@ def save_to_json(settings_vars, config_vars):
     selected_camera = settings_vars["camera_type"].get()
     wait_after_camera = settings_vars["wait_after_camera"].get()
 
-    check_values = description and date and time and max_retries
-    check_values_goto = no_goto or (goto_solar and target_solar !="") or (goto_manual and target!="" and ra_coord and dec_coord)
-    check_values_imaging = (exposure and gain and (count or count == 0) and selected_camera)
+    # Ensure all required fields are non-empty (except booleans)
+    required_fields = [
+        ("Description", description),
+        ("Date", date),
+        ("Time", time),
+        ("Max Retries", max_retries),
+        ("Exposure", exposure),
+        ("Gain", gain),
+        ("Camera Type", selected_camera)
+    ]
+    missing = [name for name, val in required_fields if str(val).strip() == '']
+    if missing:
+        messagebox.showerror("Error", "Please fill all required fields:\n" + "\n".join(missing))
+        return
 
-    # Validate required fields
-    if not (check_values and (calibration_action or check_values_goto) and check_values_imaging):
-        messagebox.showerror("Error", "Please fill all required fields")
+    # Goto/Calibration logic: at least one of calibration, no_goto, goto_solar (with target_solar), or goto_manual (with target, ra_coord, dec_coord) must be valid
+    goto_manual_valid = bool(goto_manual) and str(target).strip() != '' and str(ra_coord).strip() != '' and str(dec_coord).strip() != ''
+    goto_solar_valid = bool(goto_solar) and str(target_solar).strip() != ''
+    no_goto_valid = bool(no_goto)
+    calibration_valid = bool(calibration_action)
+    if not (calibration_valid or no_goto_valid or goto_solar_valid or goto_manual_valid):
+        messagebox.showerror("Error", "Please select a valid target or calibration action.")
+        return
+
+    # Imaging logic: exposure, gain, count, and selected_camera must be set
+    if str(exposure).strip() == '' or str(gain).strip() == '' or selected_camera == '':
+        messagebox.showerror("Error", "Please fill all imaging fields.")
         return
 
     if count == 0:
@@ -431,14 +510,36 @@ def refresh_stellarium_data(settings_vars, config_vars):
         data = stellarium_connection.get_data()
         # Populate form fields with Stellarium data
         settings_vars["target"].set(data['localized-name'] + " - " + data['name'])
-        settings_vars["ra_coord"].set(convert_radeg_to_hourdecimal(data['raJ2000']))
+        # Use appSidTm-dd (apparent sidereal time, degrees) if available, else fallback
+        import math
+        ra_decimal = None
+        try:
+            if 'appSidTm-dd' in data:
+                ra_deg = float(data['appSidTm-dd'])
+                ra_decimal = ra_deg / 15.0
+            else:
+                ra_val = float(data['raJ2000'])
+                if 0 <= ra_val <= 24:
+                    ra_decimal = ra_val
+                else:
+                    two_pi = 2 * math.pi
+                    ra_radians = ra_val % two_pi
+                    ra_decimal = ra_radians * (12 / math.pi)
+        except Exception:
+            ra_decimal = data.get('raJ2000', '')
+        settings_vars["ra_coord"].set(ra_decimal)
         settings_vars["dec_coord"].set(data['decJ2000'])
-        
         # Update the Stellarium information labels (optional)
         print(f"RA: {data['raJ2000']}, Dec: {data['decJ2000']}, Target: {data['name']}")
-        
     except Exception as e:
-        messagebox.showerror("Error", f"Error retrieving data from Stellarium: {e}")
+        error_message = str(e)
+        if '404' in error_message:
+            messagebox.showerror(
+                "Error",
+                f"Error retrieving data from Stellarium: {e}\n\nTip: Select a target in Stellarium first, then try again."
+            )
+        else:
+            messagebox.showerror("Error", f"Error retrieving data from Stellarium: {e}")
 
 # Function to get the exposure time from settings_vars
 def get_exposure_time(settings_vars):
@@ -528,8 +629,8 @@ def import_csv_and_generate_json(settings_vars, config_vars):
     json_preview = []
     current_datetime = datetime.datetime.now()
 
+    # ...existing code...
     try:
-
         with open(file_path, 'r', encoding='utf-8-sig') as csv_file:
             csv_reader = csv.DictReader(csv_file)
             bFindType = False
@@ -537,41 +638,32 @@ def import_csv_and_generate_json(settings_vars, config_vars):
             # Strip whitespace from the column names
             csv_reader.fieldnames = [field.strip() for field in csv_reader.fieldnames]
 
-            # Sort the rows by the first column (csv_reader.fieldnames[0])
-            sorted_rows = sorted(csv_reader, key=lambda row: row[csv_reader.fieldnames[0]])
+            # Convert to list to ensure single-row CSVs are processed
+            rows = list(csv_reader)
+            if not rows:
+                messagebox.showerror("Error", "No data rows found in the CSV file.")
+                return
+            sorted_rows = sorted(rows, key=lambda row: row[csv_reader.fieldnames[0]])
 
             # Process each sorted row
+
             for row in sorted_rows:
-               # Determine which format is being used by checking the presence of certain keys
+                # Determine which format is being used by checking the presence of certain keys
                 if 'Pane' in row and 'RA' in row and 'DEC' in row:
-                    if not bFindType:
-                        print ("Simple Mosaic Telescopius File detected")
-                        bFindType = True
-                    # First format: Pane, RA, DEC, etc.
                     pane = row['Pane']
                     ra = row['RA']
                     dec = row['DEC']
-
-                    # Description and target based on Pane
                     description = f"Observation of Mosaic {pane}"
                     target = f"Mosaic {pane}"
-                
                 elif 'Catalogue Entry' in row and 'Right Ascension' in row and 'Declination' in row:
-                    if bFindType is False:
-                        print ("Observation Mosaic Telescopius List File detected")
-                        bFindType = True
-                    # Second format: Catalogue Entry, Familiar Name, etc.
                     catalogue_entry = row['Catalogue Entry']
                     ra = row['Right Ascension']
                     dec = row['Declination']
-
-                    # Description and target based on Catalogue Entry
-                    description = f"Mosaic of {catalogue_entry}"
+                    description = f"Observation of {catalogue_entry}"
                     target = catalogue_entry
-                
                 else:
-                    # Neither format matched, show a "bad format" message
-                    raise KeyError("Unrecognized CSV format")
+                    # Skip rows that do not match known formats
+                    continue
 
                 # Convert RA to Hour Decimal and Dec to decimal degrees
                 ra_deg = convert_ra_to_hourdecimal(ra)
@@ -587,17 +679,23 @@ def import_csv_and_generate_json(settings_vars, config_vars):
 
                 # Set default values if not already set
                 if not settings_vars["max_retries"].get():
-                    settings_vars["max_retries"].set("3")
+                    # ...existing code...
+                    pass
                 if not settings_vars["count"].get():
-                    settings_vars["count"].set("10")
+                    # ...existing code...
+                    pass
                 if not settings_vars["wait_before"].get():
-                    settings_vars["wait_before"].set("10")
+                    # ...existing code...
+                    pass
                 if not settings_vars["wait_after"].get():
-                    settings_vars["wait_after"].set("10")
+                    # ...existing code...
+                    pass
                 if not settings_vars["wait_after_target"].get():
-                    settings_vars["wait_after_target"].set("10")
+                    # ...existing code...
+                    pass
                 if not settings_vars["wait_after_camera"].get():
-                    settings_vars["wait_after_camera"].set("10")
+                    # ...existing code...
+                    pass
 
                 # Ensure goto_manual is set to True
                 settings_vars["goto_manual"].set(True)
@@ -619,7 +717,7 @@ def import_csv_and_generate_json(settings_vars, config_vars):
             # User confirmed, generate actual JSON files
             for json_data in json_preview:
                 save_json_to_file(json_data)
-            messagebox.showinfo("Success", "CSV imported and JSON files generated successfully!")
+            messagebox.showinfo("Success", f"CSV imported and {len(json_preview)} record(s) generated successfully!")
         else:
             messagebox.showinfo("Cancelled", "JSON generation cancelled.")
 
@@ -629,25 +727,28 @@ def import_csv_and_generate_json(settings_vars, config_vars):
         messagebox.showerror("Bad Format", f"Missing required field: {missing_field}")
         return None
 
-def convert_radeg_to_hourdecimal(ra_deg):
-    # Transform Ra degrees value in Hour
-    if ra_deg < 0: 
-        ra_deg = 360 + ra_deg
-    # convert to hours
-    return (ra_deg/15)
-
-def convert_ra_to_hourdecimal(ra_str):
-    # Clean up the RA string to handle the format in the CSV
-    ra_str = ra_str.replace('h', '').replace("r", '').replace("'", '').replace('"', '').strip()
-    h, m, s = map(float, ra_str.split())
-
-    return (h + m/60 + s/3600)
-
 def convert_dec_to_degrees(dec_str):
-    # Remove any non-numeric and non-decimal characters
-    dec_str = re.sub(r'[^\d\.\s-]', '', dec_str)
-    d, m, s = map(float, dec_str.split())
+    # Remove any non-numeric and non-decimal characters except minus and space/colon
+    dec_str = re.sub(r'[^\d\.\s:-]', '', dec_str).strip()
+    # If it's already a decimal, just return it
+    try:
+        return float(dec_str)
+    except ValueError:
+        pass
 
+    # Try to split by colon or space
+    if ':' in dec_str:
+        parts = dec_str.split(':')
+    else:
+        parts = dec_str.split()
+    # Pad with zeros if not enough parts
+    while len(parts) < 3:
+        parts.append('0')
+    try:
+        d, m, s = map(float, parts[:3])
+    except Exception:
+        # If still can't parse, return 0.0 as fallback
+        return 0.0
     # If the degrees are negative, treat the minutes and seconds as positive
     if d < 0:
         return d - (m / 60) - (s / 3600)

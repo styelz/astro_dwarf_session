@@ -210,7 +210,8 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
         files_to_delete = [listbox.get(i) for i in selections]
         if not files_to_delete:
             return
-        if not messagebox.askyesno("Delete Files", f"Are you sure you want to delete the selected file(s)?\n\n" + '\n'.join(files_to_delete)):
+        count = len(files_to_delete)
+        if not messagebox.askyesno("Delete Files", f"Are you sure you want to delete the selected file(s)? ({count} file{'s' if count != 1 else ''} will be deleted)"):
             return
         errors = []
         for fname in files_to_delete:
