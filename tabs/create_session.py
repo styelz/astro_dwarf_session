@@ -161,6 +161,8 @@ def create_form_fields(scrollable_frame, settings_vars, config_vars):
     exposure_dropdown = ttk.Combobox(scrollable_frame, textvariable=exposure_var)
     if config_vars.get("exposure") is not None and config_vars["exposure"].get():
         exposure_var.set(config_vars["exposure"].get())
+    else:
+        exposure_var.set("30")
     settings_vars["exposure"] = exposure_var
     add_row(row, "Exposure", exposure_dropdown)
     row += 1
@@ -510,27 +512,32 @@ def refresh_stellarium_data(settings_vars, config_vars):
         data = stellarium_connection.get_data()
         # Populate form fields with Stellarium data
         settings_vars["target"].set(data['localized-name'] + " - " + data['name'])
-        # Use appSidTm-dd (apparent sidereal time, degrees) if available, else fallback
-        import math
-        ra_decimal = None
-        try:
-            if 'appSidTm-dd' in data:
-                ra_deg = float(data['appSidTm-dd'])
-                ra_decimal = ra_deg / 15.0
-            else:
-                ra_val = float(data['raJ2000'])
-                if 0 <= ra_val <= 24:
-                    ra_decimal = ra_val
-                else:
-                    two_pi = 2 * math.pi
-                    ra_radians = ra_val % two_pi
-                    ra_decimal = ra_radians * (12 / math.pi)
-        except Exception:
-            ra_decimal = data.get('raJ2000', '')
-        settings_vars["ra_coord"].set(ra_decimal)
-        settings_vars["dec_coord"].set(data['decJ2000'])
+        # Use raJ2000 and decJ2000 directly (decimal hours and degrees)
+        ra_decimal = ''
+        if 'raJ2000' in data:
+            try:
+                ra_j2000 = float(data['raJ2000'])
+                ra_decimal = (ra_j2000 + 360) / 15.0
+            except Exception as e:
+                print(f"[DEBUG] Exception in RA conversion from raJ2000: {e}")
+                ra_decimal = ''
+        if ra_decimal != '':
+            settings_vars["ra_coord"].set(f"{ra_decimal:.6f}")
+        else:
+            settings_vars["ra_coord"].set("")
+        if 'decJ2000' in data:
+            settings_vars["dec_coord"].set(data['decJ2000'])
+        else:
+            settings_vars["dec_coord"].set("")
+        # Update the date and time fields to the current date/time
+        import datetime
+        now = datetime.datetime.now()
+        if "date" in settings_vars:
+            settings_vars["date"].set(now.strftime('%Y-%m-%d'))
+        if "time" in settings_vars:
+            settings_vars["time"].set(now.strftime('%H:%M:%S'))
         # Update the Stellarium information labels (optional)
-        print(f"RA: {data['raJ2000']}, Dec: {data['decJ2000']}, Target: {data['name']}")
+        print(f"RA: {data.get('raJ2000')}, Dec: {data.get('decJ2000')}, Target: {data.get('name')}")
     except Exception as e:
         error_message = str(e)
         if '404' in error_message:

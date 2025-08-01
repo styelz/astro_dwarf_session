@@ -119,7 +119,29 @@ def try_attemps (function, function_succeed_message, max_attempts = 3):
 
     return continue_action
 
+def updateRA(originalRA, hoursPassed):
+  return (originalRA + hoursPassed) % 24
+
 def start_dwarf_session(program, type_dwarf = 3, stop_event=None):
+    """
+    # Update RA for elapsed time since session creation (no Stellarium)
+    goto_manual = program.get('goto_manual', {}).get('do_action')
+    if goto_manual:
+        try:
+            session_date = program.get('id_command', {}).get('date')
+            session_time = program.get('id_command', {}).get('time')
+            if session_date and session_time:
+                session_dt = datetime.strptime(f"{session_date} {session_time}", "%Y-%m-%d %H:%M:%S")
+                now_dt = datetime.now()
+                elapsed_hours = (now_dt - session_dt).total_seconds() / 3600.0
+                orig_ra = float(program['goto_manual'].get('ra_coord', 0))
+                # Add elapsed hours, wrap around 24
+                new_ra = updateRA(orig_ra, elapsed_hours)
+                program['goto_manual']['ra_coord'] = new_ra
+                log.notice(f"Adjusted RA for elapsed time: original={orig_ra}, elapsed_hours={elapsed_hours:.2f}, new RA={new_ra}")
+        except Exception as e:
+            log.warning(f"Could not adjust RA for elapsed time: {e}")
+    """
     try:
         def interrupted():
             return stop_event is not None and stop_event.is_set()
@@ -140,11 +162,6 @@ def start_dwarf_session(program, type_dwarf = 3, stop_event=None):
         log.debug("######################")
 
         # Extracting program parameters, return None if it doesn't exist
-        eq_solving = program.get('eq_solving', {}).get('do_action')
-        if eq_solving:
-            log.notice(f" To do => Automatic EQ Solving")
-
-        # Extracting program parameters, return None if it doesn't exist
         auto_focus = program.get('auto_focus', {}).get('do_action')
         if auto_focus:
             log.notice(f" To do => Automatic Autofocus")
@@ -156,6 +173,11 @@ def start_dwarf_session(program, type_dwarf = 3, stop_event=None):
         calibration = program.get('calibration', {}).get('do_action')
         if calibration:
             log.notice(f" To do => Calibration")
+
+        eq_solving = program.get('eq_solving', {}).get('do_action')
+        if eq_solving:
+            log.notice(f" To do => Automatic EQ Solving")
+
 
         goto_solar = program.get('goto_solar', {}).get('do_action')
         goto_manual = program.get('goto_manual', {}).get('do_action')
@@ -255,27 +277,6 @@ def start_dwarf_session(program, type_dwarf = 3, stop_event=None):
             time.sleep(wait_after)
             if interrupted(): return
 
-        # Execution of specific actions
-        if eq_solving:
-            continue_action = perform_stop_goto()
-            if interrupted(): return
-            verify_action(continue_action, "step_6")
-            if interrupted(): return
-            time.sleep(5)
-            if interrupted(): return
-            wait_before = program.get('eq_solving', {}).get('wait_before', 0)
-            if interrupted(): return
-            time.sleep(wait_before)
-            if interrupted(): return
-            log.notice("Processing EQ Solving")
-            continue_action = start_polar_align()
-            if interrupted(): return
-            verify_action(continue_action, "step_1b")
-            wait_after = program.get('eq_solving', {}).get('wait_after', 0)
-            if interrupted(): return
-            time.sleep(wait_after)
-            if interrupted(): return
-
         if calibration:
             log.notice("Processing Calibration")
             log.notice("    Set Exposure to 1s")
@@ -321,6 +322,27 @@ def start_dwarf_session(program, type_dwarf = 3, stop_event=None):
             if interrupted(): return
             verify_action(continue_action, "step_7")
             wait_after = program.get('calibration', {}).get('wait_after', 0)
+            if interrupted(): return
+            time.sleep(wait_after)
+            if interrupted(): return
+
+        # Execution of specific actions
+        if eq_solving:
+            continue_action = perform_stop_goto()
+            if interrupted(): return
+            verify_action(continue_action, "step_6")
+            if interrupted(): return
+            time.sleep(5)
+            if interrupted(): return
+            wait_before = program.get('eq_solving', {}).get('wait_before', 0)
+            if interrupted(): return
+            time.sleep(wait_before)
+            if interrupted(): return
+            log.notice("Processing EQ Solving")
+            continue_action = start_polar_align()
+            if interrupted(): return
+            verify_action(continue_action, "step_1b")
+            wait_after = program.get('eq_solving', {}).get('wait_after', 0)
             if interrupted(): return
             time.sleep(wait_after)
             if interrupted(): return

@@ -25,6 +25,8 @@ def overview_session_tab(parent_frame, refresh_setter=None):
     json_text = tk.Text(parent_frame, state=tk.DISABLED)
     json_text.grid(row=3, column=0, sticky="nsew", padx=10, pady=5)
     json_listbox.bind('<<ListboxSelect>>', lambda event: on_json_select(event, json_listbox, json_text))
+    # Bind double-click to select_session
+    json_listbox.bind('<Double-Button-1>', lambda event: select_session(json_listbox, json_text, select_button))
     # --- Place Select Session and Refresh JSON List buttons on the same line, always at the bottom ---
     button_frame = tk.Frame(parent_frame)
     button_frame.grid(row=4, column=0, sticky="ew", pady=10)
@@ -202,8 +204,9 @@ def select_session(json_listbox, json_text, select_button):
             selected_file = json_listbox.get(index)
             if selected_file in file_origin_map:
                 dirpath, fname = file_origin_map[selected_file]
+                dir_base = os.path.basename(dirpath)
                 # If file is in ToDo, move it back to parent dir
-                if os.path.basename(dirpath) == "ToDo":
+                if dir_base in ("ToDo", "Done", "Error"):
                     parent_dir = os.path.dirname(dirpath)
                     dest_path = os.path.join(parent_dir, fname)
                     source_path = os.path.join(dirpath, fname)

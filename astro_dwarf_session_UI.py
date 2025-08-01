@@ -459,17 +459,21 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.unlock_button = tk.Button(scheduler_frame, text="Unset Device as Host", command=self.unset_lock_device, state=tk.DISABLED, width=16)
         self.unlock_button.grid(row=0, column=2, padx=5)
 
-        self.eq_button = tk.Button(scheduler_frame, text="EQ Solving", command=self.start_eq_solving, state=tk.DISABLED, width=16)
-        self.eq_button.grid(row=0, column=3, padx=5)
-
         self.polar_button = tk.Button(scheduler_frame, text="Polar Position", command=self.start_polar_position, state=tk.DISABLED, width=16)
-        self.polar_button.grid(row=0, column=4, padx=5)
+        self.polar_button.grid(row=0, column=3, padx=5)
 
-        # Log text area
-        # Use a font that supports emoji, e.g., Segoe UI Emoji on Windows
+        self.eq_button = tk.Button(scheduler_frame, text="EQ Solving", command=self.start_eq_solving, state=tk.DISABLED, width=16)
+        self.eq_button.grid(row=0, column=4, padx=5)
+
+        # Log text area with vertical scrollbar
         emoji_font = ("Segoe UI Emoji", 10)
-        self.log_text = tk.Text(self.tab_main, wrap=tk.WORD, height=15, font=emoji_font)
-        self.log_text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        log_frame = tk.Frame(self.tab_main)
+        log_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.log_text = tk.Text(log_frame, wrap=tk.WORD, height=15, font=emoji_font)
+        log_scrollbar = tk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scrollbar.set)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # --- Astro Sessions file counts summary (one line, colored, correct count) ---
         # Use colors from overview_session.py
