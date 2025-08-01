@@ -3,6 +3,7 @@ import json
 import shutil
 import tkinter as tk
 from tkinter import messagebox
+import re
 
 from astro_dwarf_scheduler import LIST_ASTRO_DIR_DEFAULT
 
@@ -49,6 +50,11 @@ def overview_session_tab(parent_frame, refresh_setter=None):
 def populate_json_list(json_listbox):
     """Populates the listbox with JSON files from the Astro_Sessions folder."""
     json_listbox.delete(0, tk.END)
+    
+    def natural_sort_key(text):
+        """Convert a string into a list of mixed strings and integers for natural sorting."""
+        return [int(part) if part.isdigit() else part.lower() for part in re.split(r'(\d+)', text)]
+    
     # Helper to get sorted files by uuid
     def get_json_files_sorted_by_uuid(directory):
         files_with_uuid = []
@@ -63,7 +69,7 @@ def populate_json_list(json_listbox):
                     except Exception:
                         uuid = ''
                     files_with_uuid.append((uuid, fname))
-            files_with_uuid.sort(key=lambda x: (x[0] == '', x[0]))
+            files_with_uuid.sort(key=lambda x: (x[0] == '', natural_sort_key(x[0])))
         return [fname for uuid, fname in files_with_uuid]
 
     # Get files from all session subdirectories
@@ -92,8 +98,8 @@ def populate_json_list(json_listbox):
                     except Exception:
                         uuid = ''
                     files_with_origin.append((uuid, fname, dirpath, label, info['color'], info['font']))
-    # Sort all by uuid (empty uuid last)
-    files_with_origin.sort(key=lambda x: (x[0] == '', x[0]))
+    # Sort all by uuid (empty uuid last) with natural sorting
+    files_with_origin.sort(key=lambda x: (x[0] == '', natural_sort_key(x[0])))
     # Insert into listbox and build mapping
     json_listbox.file_origin_map = {}
     for uuid, fname, dirpath, label, color, font in files_with_origin:
@@ -205,16 +211,39 @@ def select_session(json_listbox, json_text, select_button):
             if selected_file in file_origin_map:
                 dirpath, fname = file_origin_map[selected_file]
                 dir_base = os.path.basename(dirpath)
-                # If file is in ToDo, move it back to parent dir
+                # If file is in ToDo, Done, or Error, move it back to parent dir and reset values
                 if dir_base in ("ToDo", "Done", "Error"):
                     parent_dir = os.path.dirname(dirpath)
                     dest_path = os.path.join(parent_dir, fname)
                     source_path = os.path.join(dirpath, fname)
                     try:
-                        shutil.move(source_path, dest_path)
-                        print(f"Moved {fname} back to {parent_dir}.")
+                        # Load the JSON data before moving
+                        with open(source_path, 'r') as f:
+                            data = json.load(f)
+                        
+                        # Reset the session values (same as "Reset Session State" button)
+                        id_cmd = data['command']['id_command']
+                        id_cmd['process'] = 'wait'
+                        id_cmd['result'] = False
+                        id_cmd['message'] = ''
+                        id_cmd['nb_try'] = 1
+                        
+                        # Save the modified data to the destination
+                        with open(dest_path, 'w') as f:
+                            json.dump(data, f, indent=4)
+                        
+                        # Remove the original file
+                        os.remove(source_path)
+                        
+                        print(f"Moved {fname} back to {parent_dir} and reset session state.")
                     except Exception as e:
-                        print(f"Error moving file {fname}: {e}")
+                        print(f"Error moving and resetting file {fname}: {e}")
+                        # Try to move without reset if JSON modification fails
+                        try:
+                            shutil.move(source_path, dest_path)
+                            print(f"Moved {fname} back to {parent_dir} (without reset).")
+                        except Exception as move_error:
+                            print(f"Error moving file {fname}: {move_error}")
                 else:
                     # Move file to ToDo as before
                     from astro_dwarf_scheduler import LIST_ASTRO_DIR

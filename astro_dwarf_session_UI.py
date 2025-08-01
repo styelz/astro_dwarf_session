@@ -1,4 +1,3 @@
-
 import os
 import shutil
 import time
@@ -256,42 +255,60 @@ class AstroDwarfSchedulerApp(tk.Tk):
         print("Wait during closing...")
         self.log("Wait during closing...")
 
-        # Schedule the close after a delay without blocking the GUI
-        self.after(1000, self.finalize_close)  # 1000ms = 1 second delay
+        # Force stop the scheduler immediately
+        if self.scheduler_running:
+            self.scheduler_running = False
+            self.scheduler_stop_event.set()
+            self.log("Forcing scheduler to stop...")
+
+        # Force close any connections
+        self.force_stop_connect_bluetooth()
+        
+        # Schedule the close with a shorter delay
+        self.after(2000, self.finalize_close)  # Reduced to 2 seconds
 
     def finalize_close(self):
         '''
-        Perform the final close with a delay to give time for any cleanup
+        Perform the final close with force termination if needed
         '''
-        self.force_stop_connect_bluetooth()
-
+        try:
+            # Force disconnect
+            perform_disconnect()
+        except:
+            pass  # Ignore errors during forced disconnect
+    
         if self.scheduler_running:
-            self.log("Waiting Closing Scheduler...")
-            self.stop_scheduler()
-        
-            self.countdown(20)
-
+            self.log("Force closing scheduler...")
+            self.scheduler_running = False
+            self.scheduler_stop_event.set()
+            
+            # Wait briefly for thread to finish, then force close
+            self.countdown(5)  # Reduced timeout
         else:
-            self.after(5000, self.destroy)
-
-    def force_stop_connect_bluetooth(self):
-        # Read the config file and update the UI to Close
-        dwarf_python_api.get_config_data.update_config_data( "ui", "Close", True)
+            self.after(1000, self.destroy)  # Reduced delay
 
     def countdown(self, wait):
         '''
         Countdown that checks scheduler status and waits for stop or timeout
         '''
-        if self.scheduler_stopped:
+        if self.scheduler_stopped or not self.scheduler_running:
             self.log("Scheduler stopped, closing now.")
             self.after(500, self.destroy)
         elif wait > 0:
             # Schedule the countdown to run again after 1 second
             self.after(1000, self.countdown, wait - 1)
         else:
-            self.log("Time's up! Closing now...")
+            self.log("Timeout reached, force closing...")
+            # Force terminate the scheduler thread if it's still running
+            if hasattr(self, 'scheduler_thread') and self.scheduler_thread.is_alive():
+                try:
+                    # This is a harsh measure, but sometimes necessary
+                    import threading
+                    self.scheduler_thread._stop()
+                except:
+                    pass
             self.after(500, self.destroy)
- 
+
     def toggle_multiple(self):
         """Show or hide the Listbox and related widgets based on checkbox state."""
         if self.multiple_var.get():
@@ -587,13 +604,17 @@ class AstroDwarfSchedulerApp(tk.Tk):
         if self.scheduler_running:
             self.scheduler_running = False
             self.scheduler_stop_event.set()
+            self.log("Scheduler is stopping...")
+            
+            # Update UI immediately
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
             self.unlock_button.config(state=tk.DISABLED)
             self.eq_button.config(state=tk.DISABLED)
             self.polar_button.config(state=tk.DISABLED)
-            self.verifyCountdown(15)
-            self.log("Scheduler is stopping...")
+            
+            # Wait for thread to finish with timeout
+            self.verifyCountdown(10)  # Reduced timeout
         else:
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
@@ -602,6 +623,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.polar_button.config(state=tk.DISABLED)
             self.log("Scheduler is stopped")
             self.enable_controls()
+    
         # Update file counts when scheduler stops
         if hasattr(self, 'update_session_counts'):
             self.update_session_counts()
@@ -622,15 +644,19 @@ class AstroDwarfSchedulerApp(tk.Tk):
         '''
         verifyCountdown that checks scheduler status and waits for stop or timeout
         '''
-        if self.scheduler_stopped:
+        if self.scheduler_stopped or not self.scheduler_running:
             self.log("Scheduler stopped.")
             self.enable_controls()
         elif wait > 0:
             # Schedule the verifyCountdown to run again after 1 second
             self.after(1000, self.verifyCountdown, wait - 1)
         else:
-            self.log("Time's up! Closing now...")
-            self.after(500, perform_disconnect())
+            self.log("Timeout reached, forcing disconnect...")
+            try:
+                perform_disconnect()
+            except:
+                pass
+            self.scheduler_stopped = True
             self.enable_controls()
 
     def run_scheduler(self):
@@ -641,22 +667,57 @@ class AstroDwarfSchedulerApp(tk.Tk):
             while not result and attempt < 3 and self.scheduler_running and not self.scheduler_stop_event.is_set():
                 attempt += 1
                 result = start_STA_connection(not self.bluetooth_connected)
+        
             if result:
                 self.log("Connected to the Dwarf")
+        
             while result and self.scheduler_running and not self.scheduler_stop_event.is_set():
-                check_and_execute_commands(stop_event=self.scheduler_stop_event)
-                # Instead of sleeping for 10 seconds, check every 0.1s if stopped
-                total_sleep = 0
-                while total_sleep < 10 and self.scheduler_running and not self.scheduler_stop_event.is_set():
-                    time.sleep(0.1)
-                    total_sleep += 0.1
+                try:
+                    # Execute commands and check if any sessions were processed
+                    sessions_processed = check_and_execute_commands(stop_event=self.scheduler_stop_event)
+                    
+                    # If no sessions were processed and scheduler is still running, continue checking
+                    if not sessions_processed and self.scheduler_running and not self.scheduler_stop_event.is_set():
+                        # Instead of sleeping for 10 seconds, check every 0.1s if stopped
+                        total_sleep = 0
+                        while total_sleep < 10 and self.scheduler_running and not self.scheduler_stop_event.is_set():
+                            time.sleep(0.1)
+                            total_sleep += 0.1
+                    else:
+                        # Sessions were processed or scheduler should stop
+                        break
+                        
+                except Exception as e:
+                    self.after(0, lambda: self.log(f"Error in scheduler loop: {e}", level="error"))
+                    break
+                
         except KeyboardInterrupt:
             self.log("Operation interrupted by the user.")
+        except Exception as e:
+            self.after(0, lambda: self.log(f"Scheduler error: {e}", level="error"))
         finally:
-            perform_disconnect()
-            self.log("Disconnected from the Dwarf.")
-            self.scheduler_running = False
-            self.scheduler_stopped = True
+            # Ensure proper cleanup
+            try:
+                perform_disconnect()
+                self.after(0, lambda: self.log("Disconnected from the Dwarf."))
+            except Exception as e:
+                self.after(0, lambda: self.log(f"Error during disconnect: {e}", level="error"))
+            
+            # Update UI state on main thread
+            def update_ui_after_scheduler():
+                self.scheduler_running = False
+                self.scheduler_stopped = True
+                self.start_button.config(state=tk.NORMAL)
+                self.stop_button.config(state=tk.DISABLED)
+                self.unlock_button.config(state=tk.DISABLED)
+                self.eq_button.config(state=tk.DISABLED)
+                self.polar_button.config(state=tk.DISABLED)
+                self.enable_controls()
+                if hasattr(self, 'update_session_counts'):
+                    self.update_session_counts()
+                self.log("Scheduler stopped automatically after session completion.", level="success")
+            
+            self.after(0, update_ui_after_scheduler)
 
     def run_unset_lock_device(self):
         try:

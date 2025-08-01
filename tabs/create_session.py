@@ -145,9 +145,11 @@ def create_form_fields(scrollable_frame, settings_vars, config_vars):
     device_var = tk.StringVar()
     device_dropdown = ttk.Combobox(scrollable_frame, textvariable=device_var)
     device_dropdown['values'] = ["Dwarf II", "Dwarf 3 Tele Lens", "Dwarf 3 Wide Lens"]
-    # Set default device type if not already set
-    if not device_var.get():
-        device_var.set(device_dropdown['values'][0])
+    
+    # Load device type from config.ini as default
+    default_device = load_device_type_from_config()
+    device_var.set(default_device)
+    
     settings_vars["device_type"] = device_var
     add_row(row, "Device Type", device_dropdown)
     row += 1
@@ -213,7 +215,7 @@ def create_form_fields(scrollable_frame, settings_vars, config_vars):
         settings_vars["camera_type"] = camera_var
 
     device_dropdown.bind("<<ComboboxSelected>>", on_device_change)
-    # Ensure camera_type is set on form creation
+    # Ensure camera_type is set on form creation and options are populated
     on_device_change(None)
 
 def create_mutually_exclusive_checkboxes(parent, var1, var2, var3, label1, label2, label3):
@@ -326,9 +328,13 @@ def save_to_json(settings_vars, config_vars):
     gain = settings_vars["gain"].get()
     count = check_integer(settings_vars["count"].get())
     settings_vars["count"].set(count)
-    # Get the selected camera type
+    # Get the selected camera type and device type
     selected_camera = settings_vars["camera_type"].get()
+    selected_device = settings_vars["device_type"].get()
     wait_after_camera = settings_vars["wait_after_camera"].get()
+
+    # Save device type to config
+    save_device_type_to_config(selected_device)
 
     # Ensure all required fields are non-empty (except booleans)
     required_fields = [
@@ -650,11 +656,9 @@ def import_csv_and_generate_json(settings_vars, config_vars):
             if not rows:
                 messagebox.showerror("Error", "No data rows found in the CSV file.")
                 return
-            sorted_rows = sorted(rows, key=lambda row: row[csv_reader.fieldnames[0]])
 
-            # Process each sorted row
-
-            for row in sorted_rows:
+            # Process each row in original order
+            for row in rows:
                 # Determine which format is being used by checking the presence of certain keys
                 if 'Pane' in row and 'RA' in row and 'DEC' in row:
                     pane = row['Pane']
@@ -1050,3 +1054,47 @@ def create_session_tab(tab_create_session, settings_vars, config_vars):
     import_label.pack(pady=(10, 0), padx=10)
     import_csv_button = ttk.Button(import_frame, text="Import CSV", command=lambda: import_csv_and_generate_json(settings_vars, config_vars))
     import_csv_button.pack(pady=(0, 10), padx=10)
+
+def load_device_type_from_config():
+    """Load the device type from config.ini file"""
+    import configparser
+    import os
+    
+    # Get the config file path (adjust path as needed for your project structure)
+    config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.ini')
+    
+    if not os.path.exists(config_file):
+        return "Dwarf II"  # Default value
+    
+    config = configparser.ConfigParser()
+    config.read(config_file)
+    
+    try:
+        return config.get('DEVICE', 'device_type')
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        return "Dwarf II"  # Default value if section/option doesn't exist
+
+def save_device_type_to_config(device_type):
+    """Save the selected device type to config.ini file"""
+    import configparser
+    import os
+    
+    # Get the config file path (adjust path as needed for your project structure)
+    config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.ini')
+    
+    config = configparser.ConfigParser()
+    
+    # Read existing config or create new one
+    if os.path.exists(config_file):
+        config.read(config_file)
+    
+    # Ensure the section exists
+    if not config.has_section('DEVICE'):
+        config.add_section('DEVICE')
+    
+    # Set the device type
+    config.set('DEVICE', 'device_type', device_type)
+    
+    # Write to file
+    with open(config_file, 'w') as configfile:
+        config.write(configfile)

@@ -2,6 +2,7 @@ import os
 import json
 import tkinter as tk
 from tkinter import messagebox
+import re
 
 def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     frame = tk.Frame(parent_tab)
@@ -40,7 +41,14 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     form_canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
     entries = {}
+    form_widgets = {}  # Cache for form structure
     selected_file = {'name': None, 'data': None}
+    save_pending = {'flag': False}
+    form_built = {'flag': False}  # Track if form structure is built
+    
+    def natural_sort_key(text):
+        """Convert a string into a list of mixed strings and integers for natural sorting."""
+        return [int(part) if part.isdigit() else part.lower() for part in re.split(r'(\d+)', text)]
 
     def get_json_files_sorted_by_uuid(directory):
         files_with_uuid = []
@@ -55,7 +63,8 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
                     except Exception:
                         uuid = ''
                     files_with_uuid.append((uuid, fname))
-            files_with_uuid.sort(key=lambda x: (x[0] == '', x[0]))
+            # Use natural sorting for UUIDs
+            files_with_uuid.sort(key=lambda x: (x[0] == '', natural_sort_key(x[0])))
         return [fname for uuid, fname in files_with_uuid]
 
     def refresh_list():
@@ -69,16 +78,127 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
             refresh_callback()
 
     def clear_form():
-        for widget in form_frame.winfo_children():
-            widget.destroy()
-        entries.clear()
+        # Only clear values, not destroy widgets
+        if form_built['flag']:
+            for key, widget in entries.items():
+                if hasattr(widget, 'delete'):
+                    widget.delete(0, tk.END)
+                elif hasattr(widget, 'set'):
+                    widget.set('')
+        else:
+            # First time - destroy everything
+            for widget in form_frame.winfo_children():
+                widget.destroy()
+            entries.clear()
+            form_widgets.clear()
+        save_pending['flag'] = False
 
-    def populate_form(data):
+    def schedule_save():
+        """Schedule a save operation to reduce frequent saves"""
+        if not save_pending['flag']:
+            save_pending['flag'] = True
+            form_frame.after(300, perform_save)  # Reduced delay
+
+    def perform_save():
+        """Perform the actual save operation"""
+        if save_pending['flag']:
+            save_pending['flag'] = False
+            save_json()
+
+    def build_form_structure(data):
+        """Build the form structure once and reuse it"""
+        if form_built['flag']:
+            return  # Form already built
+        
         clear_form()
         row = 0
-        id_cmd = data['command']['id_command']
+        
         # Add Reset button at the top
+        header_frame = tk.Frame(form_frame)
+        header_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0,5))
+        header_frame.grid_columnconfigure(0, weight=1)
+        
+        tk.Label(header_frame, text="Session Info", font=("Arial", 11, "bold")).grid(row=0, column=0, sticky="w")
+        reset_btn = tk.Button(header_frame, text="Reset Session State", bg="#f0ad4e", fg="black")
+        reset_btn.grid(row=0, column=1, sticky="e", padx=(0,10))
+        form_widgets['reset_btn'] = reset_btn
+        row += 1
+        
+        # Build id_command fields
+        for key in ["uuid", "description", "date", "time", "process", "max_retries", "result", "message", "nb_try"]:
+            label = tk.Label(form_frame, text=key+":")
+            label.grid(row=row, column=0, sticky="e")
+            ent = tk.Entry(form_frame, width=40)
+            ent.grid(row=row, column=1, sticky="w")
+            entries[('id_command', key)] = ent
+            form_widgets[('id_command', key)] = (label, ent)
+            ent.bind('<FocusOut>', lambda e: schedule_save())
+            ent.bind('<Return>', lambda e: schedule_save())
+            row += 1
+        
+        # Build subcmd sections - we'll populate dynamically
+        form_widgets['subcmd_start_row'] = row
+        form_built['flag'] = True
+
+    def populate_subcmd_fields(data, start_row):
+        """Populate subcmd fields dynamically"""
+        # Clear existing subcmd widgets
+        for key in list(entries.keys()):
+            if key[0] != 'id_command':
+                widget = entries[key]
+                if hasattr(widget, 'destroy'):
+                    widget.destroy()
+                del entries[key]
+        
+        # Clear subcmd form widgets
+        for key in list(form_widgets.keys()):
+            if isinstance(key, tuple) and key[0] != 'id_command':
+                widgets = form_widgets[key]
+                if isinstance(widgets, tuple):
+                    for w in widgets:
+                        if hasattr(w, 'destroy'):
+                            w.destroy()
+                del form_widgets[key]
+        
+        row = start_row
+        for subcmd in ["eq_solving", "auto_focus", "infinite_focus", "calibration", "goto_solar", "goto_manual", "setup_camera", "setup_wide_camera"]:
+            sub = data['command'].get(subcmd, {})
+            if not sub:  # Skip if subcmd doesn't exist
+                continue
+                
+            label = tk.Label(form_frame, text=subcmd, font=("Arial", 10, "bold"))
+            label.grid(row=row, column=0, sticky="w", pady=(10,0))
+            form_widgets[f'{subcmd}_header'] = label
+            row += 1
+            
+            for k, v in sub.items():
+                sub_label = tk.Label(form_frame, text="    "+k+":")
+                sub_label.grid(row=row, column=0, sticky="e")
+                
+                if k == 'do_action':
+                    from tkinter import ttk
+                    combo = ttk.Combobox(form_frame, values=["True", "False"], width=37, state="readonly")
+                    combo.grid(row=row, column=1, sticky="w")
+                    entries[(subcmd, k)] = combo
+                    form_widgets[(subcmd, k)] = (sub_label, combo)
+                    combo.bind('<<ComboboxSelected>>', lambda e: schedule_save())
+                else:
+                    ent = tk.Entry(form_frame, width=40)
+                    ent.grid(row=row, column=1, sticky="w")
+                    entries[(subcmd, k)] = ent
+                    form_widgets[(subcmd, k)] = (sub_label, ent)
+                    ent.bind('<FocusOut>', lambda e: schedule_save())
+                    ent.bind('<Return>', lambda e: schedule_save())
+                row += 1
+
+    def populate_form(data):
+        """Populate form with data - optimized version"""
+        # Build form structure if not built
+        build_form_structure(data)
+        
+        # Set reset button command
         def reset_fields():
+            id_cmd = data['command']['id_command']
             id_cmd['process'] = 'wait'
             id_cmd['result'] = False
             id_cmd['message'] = ''
@@ -93,51 +213,55 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
             entries[('id_command', 'nb_try')].delete(0, tk.END)
             entries[('id_command', 'nb_try')].insert(0, '1')
             save_json()
-
-        # Place the label on the left and the reset button on the right, same row
-        tk.Label(form_frame, text="Session Info", font=("Arial", 11, "bold")).grid(row=row, column=0, columnspan=1, sticky="w", pady=(0,5))
-        reset_btn = tk.Button(form_frame, text="Reset Session State", command=reset_fields, bg="#f0ad4e", fg="black")
-        reset_btn.grid(row=row, column=1, sticky="e", pady=(0,5), padx=(0,10))
-        row += 1
+        
+        form_widgets['reset_btn'].config(command=reset_fields)
+        
+        # Populate id_command fields
+        id_cmd = data['command']['id_command']
         for key in ["uuid", "description", "date", "time", "process", "max_retries", "result", "message", "nb_try"]:
-            tk.Label(form_frame, text=key+":").grid(row=row, column=0, sticky="e")
-            val = id_cmd.get(key, "")
-            ent = tk.Entry(form_frame, width=40)
-            ent.insert(0, str(val))
-            ent.grid(row=row, column=1, sticky="w")
-            entries[('id_command', key)] = ent
-            ent.bind('<FocusOut>', lambda e, k=key: save_json())
-            ent.bind('<Return>', lambda e, k=key: save_json())
-            row += 1
+            if ('id_command', key) in entries:
+                widget = entries[('id_command', key)]
+                widget.delete(0, tk.END)
+                val = id_cmd.get(key, "")
+                widget.insert(0, str(val))
+        
+        # Populate subcmd fields
+        populate_subcmd_fields(data, form_widgets['subcmd_start_row'])
+        
+        # Set subcmd values
         for subcmd in ["eq_solving", "auto_focus", "infinite_focus", "calibration", "goto_solar", "goto_manual", "setup_camera", "setup_wide_camera"]:
-            tk.Label(form_frame, text=subcmd, font=("Arial", 10, "bold")).grid(row=row, column=0, sticky="w", pady=(10,0))
-            row += 1
             sub = data['command'].get(subcmd, {})
             for k, v in sub.items():
-                tk.Label(form_frame, text="    "+k+":").grid(row=row, column=0, sticky="e")
-                if k == 'do_action':
-                    from tkinter import ttk
-                    combo = ttk.Combobox(form_frame, values=["True", "False"], width=37, state="readonly")
-                    combo.set("True" if v else "False")
-                    combo.grid(row=row, column=1, sticky="w")
-                    entries[(subcmd, k)] = combo
-                    combo.bind('<<ComboboxSelected>>', lambda e, s=subcmd, kk=k: save_json())
-                else:
-                    ent = tk.Entry(form_frame, width=40)
-                    ent.insert(0, str(v))
-                    ent.grid(row=row, column=1, sticky="w")
-                    entries[(subcmd, k)] = ent
-                    ent.bind('<FocusOut>', lambda e, s=subcmd, kk=k: save_json())
-                    ent.bind('<Return>', lambda e, s=subcmd, kk=k: save_json())
-                row += 1
+                if (subcmd, k) in entries:
+                    widget = entries[(subcmd, k)]
+                    if k == 'do_action':
+                        widget.set("True" if v else "False")
+                    else:
+                        if hasattr(widget, 'delete'):
+                            widget.delete(0, tk.END)
+                            widget.insert(0, str(v))
 
     def on_select(event):
-        if selected_file['name'] and selected_file['data']:
-            save_json()
+        # Save any pending changes before switching files
+        if save_pending['flag']:
+            perform_save()
+        
         selection = listbox.curselection()
         if not selection:
             return
+            
         fname = listbox.get(selection[0])
+        
+        # Don't reload if same file is selected
+        if selected_file['name'] == fname:
+            return
+        
+        # Show loading indicator
+        if not form_built['flag']:
+            loading_label = tk.Label(form_frame, text="Loading...", font=("Arial", 12))
+            loading_label.pack()
+            form_frame.update_idletasks()
+        
         fpath = os.path.join(session_dir, fname)
         try:
             with open(fpath, 'r') as f:
@@ -154,43 +278,46 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     def save_json():
         fname = selected_file['name']
         if not fname:
-            messagebox.showwarning("No file selected", "Please select a session file to save.")
             return
         data = selected_file['data']
         if not data:
-            messagebox.showerror("No data", "No session data loaded.")
             return
-        id_cmd = data['command']['id_command']
-        for key in ["uuid", "description", "date", "time", "process", "max_retries", "result", "message", "nb_try"]:
-            val = entries[('id_command', key)].get()
-            if key in ["max_retries", "nb_try"]:
-                try: val = int(val)
-                except: val = 0
-            elif key == "result":
-                val = val.lower() == 'true'
-            id_cmd[key] = val
-        for subcmd in ["eq_solving", "auto_focus", "infinite_focus", "calibration", "goto_solar", "goto_manual", "setup_camera", "setup_wide_camera"]:
-            sub = data['command'].get(subcmd, {})
-            for k in sub.keys():
-                widget = entries[(subcmd, k)]
-                if k == 'do_action':
-                    val = widget.get()
-                    val = val == 'True'
-                else:
-                    val = widget.get()
-                    if isinstance(val, str) and val.lower() in ['true', 'false']:
-                        val = val.lower() == 'true'
-                    else:
-                        try:
-                            if '.' in val:
-                                val = float(val)
-                            else:
-                                val = int(val)
-                        except:
-                            pass
-                sub[k] = val
-        fpath = os.path.join(session_dir, fname)
+            
         try:
+            id_cmd = data['command']['id_command']
+            for key in ["uuid", "description", "date", "time", "process", "max_retries", "result", "message", "nb_try"]:
+                if ('id_command', key) in entries:
+                    val = entries[('id_command', key)].get()
+                    if key in ["max_retries", "nb_try"]:
+                        try: val = int(val)
+                        except: val = 0
+                    elif key == "result":
+                        val = val.lower() == 'true'
+                    id_cmd[key] = val
+                    
+            for subcmd in ["eq_solving", "auto_focus", "infinite_focus", "calibration", "goto_solar", "goto_manual", "setup_camera", "setup_wide_camera"]:
+                sub = data['command'].get(subcmd, {})
+                for k in sub.keys():
+                    if (subcmd, k) in entries:
+                        widget = entries[(subcmd, k)]
+                        if k == 'do_action':
+                            val = widget.get()
+                            val = val == 'True'
+                        else:
+                            val = widget.get()
+                            if isinstance(val, str) and val.lower() in ['true', 'false']:
+                                val = val.lower() == 'true'
+                            else:
+                                try:
+                                    if '.' in val:
+                                        val = float(val)
+                                    else:
+                                        val = int(val)
+                                except:
+                                    pass
+                        sub[k] = val
+                        
+            fpath = os.path.join(session_dir, fname)
             with open(fpath, 'w') as f:
                 json.dump(data, f, indent=4)
         except Exception as e:
