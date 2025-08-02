@@ -461,8 +461,16 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.button_no.grid(row=0, column=1, padx=5)
         
         # Frame for Start/Stop Scheduler buttons
-        self.label3 = tk.Label(self.tab_main, text="Scheduler", font=("Arial", 12))
-        self.label3.pack(anchor="w", padx=10, pady=10)
+        scheduler_header_frame = tk.Frame(self.tab_main)
+        scheduler_header_frame.pack(anchor="w", padx=10, pady=10, fill="x")
+
+        self.label3 = tk.Label(scheduler_header_frame, text="Scheduler", font=("Arial", 12))
+        self.label3.pack(side="left", anchor="w")
+
+        # Add session information label to the right of the Scheduler heading
+        self.session_info_label = tk.Label(scheduler_header_frame, text="", font=("Arial", 10), fg="blue")
+        self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))  # 20px left padding for spacing
+        self.session_info_label.pack_forget()  # Hide it initially
 
         scheduler_frame = tk.Frame(self.tab_main)
         scheduler_frame.pack(anchor="w", padx=10, pady=10)
@@ -486,6 +494,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         emoji_font = ("Segoe UI Emoji", 10)
         log_frame = tk.Frame(self.tab_main)
         log_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
         self.log_text = tk.Text(log_frame, wrap=tk.WORD, height=15, font=emoji_font)
         log_scrollbar = tk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_scrollbar.set)
@@ -546,6 +555,10 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.update_session_counts()
             self.after(10000, periodic_update_counts)
         periodic_update_counts()
+
+        # Periodically update session information
+        self.update_session_info()
+
     def clear_log_output(self):
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete(1.0, tk.END)
@@ -593,26 +606,28 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.eq_button.config(state=tk.NORMAL)
             self.polar_button.config(state=tk.NORMAL)
             self.log("Astro_Dwarf_Scheduler is starting...")
+            self.scheduler_start_time = datetime.now()  # Track when the scheduler starts
             self.scheduler_thread = threading.Thread(target=self.run_scheduler)
             self.scheduler_thread.start()
+            self.update_session_info()  # Start updating session info
         # Update file counts when scheduler starts
         if hasattr(self, 'update_session_counts'):
             self.update_session_counts()
 
     def stop_scheduler(self):
-        self.stop_logHandler()
+        self.stop_logHandler()  # Stop the logging handler
         if self.scheduler_running:
             self.scheduler_running = False
             self.scheduler_stop_event.set()
             self.log("Scheduler is stopping...")
-            
+
             # Update UI immediately
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
             self.unlock_button.config(state=tk.DISABLED)
             self.eq_button.config(state=tk.DISABLED)
             self.polar_button.config(state=tk.DISABLED)
-            
+
             # Wait for thread to finish with timeout
             self.verifyCountdown(10)  # Reduced timeout
         else:
@@ -623,7 +638,10 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.polar_button.config(state=tk.DISABLED)
             self.log("Scheduler is stopped")
             self.enable_controls()
-    
+
+        # Hide session info when scheduler stops
+        self.session_info_label.pack_forget()
+
         # Update file counts when scheduler stops
         if hasattr(self, 'update_session_counts'):
             self.update_session_counts()
@@ -662,22 +680,25 @@ class AstroDwarfSchedulerApp(tk.Tk):
     def run_scheduler(self):
         try:
             self.scheduler_stopped = False
+            self.session_running = False  # Track if a session is running
             attempt = 0
             result = False
             while not result and attempt < 3 and self.scheduler_running and not self.scheduler_stop_event.is_set():
                 attempt += 1
                 result = start_STA_connection(not self.bluetooth_connected)
-        
+
             if result:
                 self.log("Connected to the Dwarf")
-        
+
             while result and self.scheduler_running and not self.scheduler_stop_event.is_set():
                 try:
                     # Execute commands and check if any sessions were processed
+                    self.session_running = True  # Mark session as running
                     sessions_processed = check_and_execute_commands(stop_event=self.scheduler_stop_event)
-                    
+
                     # If no sessions were processed and scheduler is still running, continue checking
                     if not sessions_processed and self.scheduler_running and not self.scheduler_stop_event.is_set():
+                        self.session_running = False  # No session is running
                         # Instead of sleeping for 10 seconds, check every 0.1s if stopped
                         total_sleep = 0
                         while total_sleep < 10 and self.scheduler_running and not self.scheduler_stop_event.is_set():
@@ -686,23 +707,24 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     else:
                         # Sessions were processed or scheduler should stop
                         break
-                        
+
                 except Exception as e:
                     self.after(0, lambda: self.log(f"Error in scheduler loop: {e}", level="error"))
                     break
-                
+
         except KeyboardInterrupt:
             self.log("Operation interrupted by the user.")
         except Exception as e:
             self.after(0, lambda: self.log(f"Scheduler error: {e}", level="error"))
         finally:
+            self.session_running = False  # Ensure session state is reset
             # Ensure proper cleanup
             try:
                 perform_disconnect()
                 self.after(0, lambda: self.log("Disconnected from the Dwarf."))
             except Exception as e:
                 self.after(0, lambda: self.log(f"Error during disconnect: {e}", level="error"))
-            
+
             # Update UI state on main thread
             def update_ui_after_scheduler():
                 self.scheduler_running = False
@@ -716,7 +738,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 if hasattr(self, 'update_session_counts'):
                     self.update_session_counts()
                 self.log("Scheduler stopped automatically after session completion.", level="success")
-            
+                self.stop_logHandler()  # Stop the logging handler here as well
+
             self.after(0, update_ui_after_scheduler)
 
     def run_unset_lock_device(self):
@@ -806,9 +829,9 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.logger.addHandler(self.text_handler)
 
     def stop_logHandler(self):
-        self.logger.info("Removing L...")
         if hasattr(self, 'text_handler') and self.text_handler in self.logger.handlers:
             self.logger.removeHandler(self.text_handler)  # Remove the TextHandler
+            self.text_handler = None  # Clear the reference to avoid reuse
 
     def log(self, message, level="info"):
         # Add color and emoji for direct log calls
@@ -831,6 +854,96 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.log_text.insert(tk.END, emoji + message + "\n", color)
         self.log_text.tag_config(color, foreground=color)
         self.log_text.see(tk.END)
+
+    def update_session_info(self):
+        """
+        Update the session information label with the next session's start time,
+        the runtime of the current session, or a countdown to the next session.
+        """
+        from astro_dwarf_scheduler import LIST_ASTRO_DIR, get_json_files_sorted_by_uuid
+        import os
+        import json
+        from datetime import datetime, timedelta
+
+        if self.scheduler_running:
+            # Show the session info label
+            self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))
+
+            # Check if a session is currently running
+            if getattr(self, 'session_running', False):
+                # Calculate runtime
+                if not hasattr(self, 'session_start_time'):
+                    self.session_start_time = datetime.now()
+                runtime = datetime.now() - self.session_start_time
+                runtime_str = str(runtime).split('.')[0]  # Format as HH:MM:SS
+                self.session_info_label.config(text=f"Current session running for: {runtime_str}")
+            else:
+                # Reset start time when no session is running
+                if hasattr(self, 'session_start_time'):
+                    del self.session_start_time
+
+                # Check for the next session in the ToDo directory
+                todo_dir = LIST_ASTRO_DIR["TODO_DIR"]
+                if os.path.exists(todo_dir):
+                    todo_files = get_json_files_sorted_by_uuid(todo_dir)
+                    if todo_files:
+                        next_session_file = todo_files[0]
+                        next_session_path = os.path.join(todo_dir, next_session_file)
+                        try:
+                            with open(next_session_path, 'r') as f:
+                                session_data = json.load(f)
+                            id_command = session_data.get('command', {}).get('id_command', {})
+                            scheduled_date = id_command.get('date', 'Unknown')
+                            scheduled_time = id_command.get('time', 'Unknown')
+
+                            # Calculate countdown
+                            try:
+                                scheduled_datetime = datetime.strptime(f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %H:%M:%S")
+                                now = datetime.now()
+                                if scheduled_datetime > now:
+                                    countdown = scheduled_datetime - now
+                                    countdown_str = str(countdown).split('.')[0]  # Format as HH:MM:SS
+                                    self.session_info_label.config(
+                                        text=f"Next session: {next_session_file} at {scheduled_date} {scheduled_time} (in {countdown_str})"
+                                    )
+                                else:
+                                    self.session_info_label.config(
+                                        text=f"Next session: {next_session_file} at {scheduled_date} {scheduled_time} (starting soon)"
+                                    )
+                            except ValueError:
+                                self.session_info_label.config(text="Error parsing next session time.")
+                        except Exception as e:
+                            self.session_info_label.config(text="Error reading next session.")
+                    else:
+                        self.session_info_label.config(text="No sessions scheduled - Create sessions in 'Create Session' tab")
+                else:
+                    self.session_info_label.config(text="No session directory found - Check configuration")
+        else:
+            # Show a helpful placeholder when scheduler is not running
+            self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))
+            
+            # Check if there are any sessions in ToDo to provide useful information
+            todo_dir = LIST_ASTRO_DIR["TODO_DIR"]
+            if os.path.exists(todo_dir):
+                todo_files = get_json_files_sorted_by_uuid(todo_dir)
+                if todo_files:
+                    self.session_info_label.config(
+                        text=f"Ready to start - {len(todo_files)} session(s) waiting. Click 'Start Scheduler' to begin.",
+                        fg="green"
+                    )
+                else:
+                    self.session_info_label.config(
+                        text="No sessions scheduled - Create sessions in 'Create Session' tab to get started.",
+                        fg="orange"
+                    )
+            else:
+                self.session_info_label.config(
+                    text="Session directory not found - Check your configuration settings.",
+                    fg="red"
+                )
+
+        # Schedule the next update
+        self.after(1000, self.update_session_info)
 
 # Main application
 if __name__ == "__main__":
