@@ -328,7 +328,27 @@ class AstroDwarfSchedulerApp(tk.Tk):
         
         # Set window icon
         try:
-            self.iconbitmap("Install/astro_dwarf_session_UI.ico")
+            # Try multiple possible icon locations for different deployment scenarios
+            icon_paths = [
+                "Install/astro_dwarf_session_UI.ico",  # Development/source directory
+                "astro_dwarf_session_UI.ico",  # Packaged application root
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "Install", "astro_dwarf_session_UI.ico"),  # Absolute path
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "astro_dwarf_session_UI.ico")  # Same directory as script
+            ]
+            
+            icon_loaded = False
+            for icon_path in icon_paths:
+                try:
+                    if os.path.exists(icon_path):
+                        self.iconbitmap(icon_path)
+                        icon_loaded = True
+                        break
+                except Exception:
+                    continue
+            
+            if not icon_loaded:
+                logging.warning("Could not load icon from any of the expected locations")
+                
         except Exception as e:
             logging.warning(f"Could not load icon: {e}")
 

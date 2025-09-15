@@ -38,6 +38,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "build\setupUI\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Ensure the icon file is available in the app root directory for the application to use
+Source: "Install\astro_dwarf_session_UI.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
