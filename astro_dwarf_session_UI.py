@@ -1050,12 +1050,12 @@ class AstroDwarfSchedulerApp(tk.Tk):
     def stop_scheduler(self):
         self.stop_logHandler()  # Stop the logging handler
         if self.scheduler_running:
+
             self.scheduler_running = False
             self.scheduler_stop_event.set()
-            self.log("Scheduler is waiting for the process to stop.")
-            self.toggle_buttons(tk.NONE)    
+
             # Wait for thread to finish with timeout
-            self.verifyCountdown(10)  # Reduced timeout
+            self.verifyCountdown(150)  # Wait up to 150 seconds for scheduler to stop
 
             # Also attempt to stop Astro Photo if running
             self.log("Stopping Astro Photo if running...")
@@ -1090,10 +1090,11 @@ class AstroDwarfSchedulerApp(tk.Tk):
 
             # Start monitoring both threads
             wait_for_stop_photo_completion()
+            self.toggle_buttons(tk.NONE)    
                     
         else:
-            self.toggle_buttons(tk.DISABLED)    
-            self.log("Scheduler is stopping...")
+            self.toggle_buttons(tk.DISABLED)
+            self.log("Scheduler is stopped")
 
         # Hide session info when scheduler stops
         self.session_info_label.pack_forget()
