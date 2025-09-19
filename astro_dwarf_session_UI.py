@@ -13,7 +13,7 @@ import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import messagebox, ttk
 from astro_dwarf_scheduler import check_and_execute_commands, start_connection, start_STA_connection, setup_new_config
-from dwarf_python_api.lib.dwarf_utils import perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, unset_HostMaster, set_HostMaster, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown
+from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto, perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, unset_HostMaster, set_HostMaster, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown
 from astro_dwarf_scheduler import LIST_ASTRO_DIR, get_json_files_sorted
 
 # import data for config.py
@@ -1056,10 +1056,44 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.toggle_buttons(tk.NONE)    
             # Wait for thread to finish with timeout
             self.verifyCountdown(10)  # Reduced timeout
+
+            # Also attempt to stop Astro Photo if running
+            self.log("Stopping Astro Photo if running...")
+            self.stop_astro_photo = threading.Thread(target=perform_stopAstroPhoto, daemon=True)
+            self.stop_astro_photo.start()
+            
+            # Wait for stop_astro_photo thread to stop, then wait additional 150 seconds
+            def wait_for_stop_photo_completion():
+                # Check if stop_astro_photo thread is still running
+                stop_photo_running = hasattr(self, 'stop_astro_photo') and self.stop_astro_photo.is_alive()
+                # Check if scheduler thread is still running
+                scheduler_running = hasattr(self, 'scheduler_thread') and self.scheduler_thread.is_alive()
+
+                def finalize_stop():
+                    self.log("Scheduler and Astro Photo have fully stopped.")
+                    self.toggle_buttons(tk.DISABLED)    
+                    # Only enable the scheduler button so user can start again
+                    self.scheduler_button.config(state=tk.NORMAL, text="Start Scheduler")
+                    self.enable_controls()
+                    self.scheduler_stopped = True
+                    # Update file counts when scheduler stops
+                    if hasattr(self, 'update_session_counts'):
+                        self.update_session_counts()
+
+                if stop_photo_running or scheduler_running:
+                    # Check again in 100ms if either thread is still running
+                    self.after(100, wait_for_stop_photo_completion)
+                else:
+                    # Both threads have stopped, we need to wait 150 seconds to ensure Astro Photo has fully stopped
+                    self.log("Astro Photo and scheduler threads have stopped, waiting additional 150 seconds to ensure complete stop...")
+                    self.after(150000, finalize_stop)  # Wait additional 150 seconds
+
+            # Start monitoring both threads
+            wait_for_stop_photo_completion()
+                    
         else:
             self.toggle_buttons(tk.DISABLED)    
             self.log("Scheduler is stopping...")
-            #self.enable_controls()
 
         # Hide session info when scheduler stops
         self.session_info_label.pack_forget()
