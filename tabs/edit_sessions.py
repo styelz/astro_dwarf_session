@@ -72,14 +72,37 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     form_built = {'flag': False}  # Track if form structure is built
     has_unsaved_changes = {'flag': False}  # Track if there are unsaved changes
 
-    def refresh_list():
+    def refresh_list(preserve_selection=True):
+        # Save current selection if requested
+        current_selection = None
+        if preserve_selection and selected_file['name']:
+            current_selection = selected_file['name']
+        
+        # Save any pending changes before refreshing
+        save_json()
+        
+        # Clear and repopulate the listbox
         listbox.delete(0, tk.END)
-        for fname in get_json_files_sorted(session_dir):
+        files = get_json_files_sorted(session_dir)
+        for fname in files:
             listbox.insert(tk.END, fname)
-        clear_form()
-        selected_file['name'] = None
-        selected_file['data'] = None
-        has_unsaved_changes['flag'] = False
+        
+        # Try to restore selection if the file still exists
+        if current_selection and current_selection in files:
+            # Find and select the file
+            for i in range(listbox.size()):
+                if listbox.get(i) == current_selection:
+                    listbox.selection_set(i)
+                    listbox.see(i)  # Ensure the selected item is visible
+                    # Don't trigger on_select as the file is already loaded
+                    break
+        else:
+            # Clear form if no selection to restore
+            clear_form()
+            selected_file['name'] = None
+            selected_file['data'] = None
+            has_unsaved_changes['flag'] = False
+        
         if refresh_callback:
             refresh_callback()
 
@@ -322,7 +345,7 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
             has_unsaved_changes['flag'] = False  # Reset change flag after loading
         except Exception as e:
             clear_form()
-            refresh_list()
+            refresh_list(preserve_selection=False)  # Don't preserve selection on error
 
     # Add event binding to detect when listbox loses selection
     def on_listbox_focus_out(event):
@@ -356,7 +379,7 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
             # If the currently selected file is being renamed, update selected_file
             if selected_file['name'] == old_fname:
                 selected_file['name'] = new_fname
-            refresh_list()
+            refresh_list(preserve_selection=True)  # Preserve selection after rename
             # Reselect the renamed file
             idx = None
             for i in range(listbox.size()):
@@ -376,7 +399,7 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     
     frame.bind('<FocusOut>', on_frame_focus_out)
     
-    refresh_list()
+    refresh_list(preserve_selection=False)  # Initial load doesn't need to preserve selection
 
     button_frame = tk.Frame(parent_tab)
     button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
@@ -393,7 +416,7 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
         if not files_to_delete:
             return
         count = len(files_to_delete)
-        if not messagebox.askyesno("Delete Files", f"Are you sure you want to delete the selected file(s)? ({count} file{'s' if count != 1 else ''} will be deleted)"):
+        if not messagebox.askyesno("Delete Selected Files", f"Are you sure you want to delete the selected file(s)? ({count} file{'s' if count != 1 else ''} will be deleted)"):
             return
         errors = []
         for fname in files_to_delete:
@@ -403,20 +426,15 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
                     os.remove(fpath)
             except Exception as e:
                 errors.append(f"{fname}: {e}")
-        refresh_list()
+        refresh_list(preserve_selection=False)  # Don't preserve selection after deletion
         if errors:
             messagebox.showerror("Delete Error", "Some files could not be deleted:\n" + '\n'.join(errors))
 
-    delete_btn = tk.Button(button_frame, text="Delete File(s)", command=delete_selected_files)
+    delete_btn = tk.Button(button_frame, text="Delete Selected", command=delete_selected_files)
     delete_btn.pack(side=tk.LEFT, padx=5)
-    refresh_btn = tk.Button(button_frame, text="Refresh List", command=refresh_list)
-    refresh_btn.pack(side=tk.LEFT, padx=5)
     rename_label = tk.Label(button_frame, text="Double click filenames to rename", fg="#555555", font=("Arial", 9, "italic"))
     rename_label.pack(side=tk.LEFT, padx=5)
 
-    # Information label to the right of the refresh button
-    info_label = tk.Label(button_frame, text="Updates are saved automatically", fg="#555555", font=("Arial", 9, "italic"))
-    info_label.pack(side=tk.RIGHT, padx=10)
 
     # Return a cleanup function that saves on tab close
     def cleanup():

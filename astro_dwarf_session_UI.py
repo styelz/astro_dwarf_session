@@ -323,7 +323,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.last_text = ""
         super().__init__()
                 
-        self.title("Astro Dwarf Scheduler")
+        self.title("Astro Dwarf Scheduler v1.7.5")
         self.geometry("810x800")
         
         # Set window icon
@@ -455,6 +455,9 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     if tab == 'Session Overview':
                         if self.overview_refresh:
                             self.overview_refresh()
+                    elif tab == 'Edit Sessions':
+                        if hasattr(self, 'edit_sessions_refresh') and self.edit_sessions_refresh:
+                            self.edit_sessions_refresh()
                     # Removed automatic Create Session update on tab change
                     # Only update when settings are actually changed
             except (tk.TclError, ValueError, TypeError, IndexError) as e:
@@ -885,22 +888,22 @@ class AstroDwarfSchedulerApp(tk.Tk):
         for i in range(7):
             scheduler_frame.grid_columnconfigure(i, weight=1)
 
-        self.scheduler_button = tk.Button(scheduler_frame, text="Start Scheduler", command=self.toggle_scheduler, state=tk.DISABLED, width=16)
+        self.scheduler_button = tk.Button(scheduler_frame, text="Start Scheduler", command=self.toggle_scheduler, state=tk.DISABLED, width=18)
         self.scheduler_button.grid(row=0, column=0, padx=2, sticky="sew")
 
         self.unlock_button = tk.Button(scheduler_frame, text="Unset as Host", command=self.unset_lock_device, state=tk.DISABLED, width=16)
         self.unlock_button.grid(row=0, column=1, padx=2, sticky="sew")
 
-        self.calibrate_button = tk.Button(scheduler_frame, text="Calibrate", command=self.start_calibration, state=tk.DISABLED, width=16)
+        self.calibrate_button = tk.Button(scheduler_frame, text="Calibrate", command=self.start_calibration, state=tk.DISABLED, width=14)
         self.calibrate_button.grid(row=0, column=2, padx=2, sticky="sew")
 
-        self.autofocus_button = tk.Button(scheduler_frame, text="Auto Focus", command=self.start_auto_focus_button, state=tk.DISABLED, width=16)
+        self.autofocus_button = tk.Button(scheduler_frame, text="Auto Focus", command=self.start_auto_focus_button, state=tk.DISABLED, width=14)
         self.autofocus_button.grid(row=0, column=3, padx=2, sticky="sew")
 
         self.polar_button = tk.Button(scheduler_frame, text="Polar Position", command=self.start_polar_position, state=tk.DISABLED, width=16)
         self.polar_button.grid(row=0, column=4, padx=2, sticky="sew")
 
-        self.eq_button = tk.Button(scheduler_frame, text="EQ Solving", command=self.start_eq_solving, state=tk.DISABLED, width=16)
+        self.eq_button = tk.Button(scheduler_frame, text="EQ Solving", command=self.start_eq_solving, state=tk.DISABLED, width=14)
         self.eq_button.grid(row=0, column=5, padx=2, sticky="sew")
 
         # Power Down button (enabled if API supports power down functionality)

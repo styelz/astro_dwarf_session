@@ -39,7 +39,7 @@ def overview_session_tab(parent_frame, refresh_setter=None):
     json_listbox.bind('<<ListboxSelect>>', lambda event: on_json_select(event, json_listbox, json_text))
 
     # Bind double-click to select_session
-    json_listbox.bind('<Double-Button-1>', lambda event: select_session(json_listbox, json_text, refresh_json_list))
+    json_listbox.bind('<Double-Button-1>', lambda event: select_session_with_position_restore(json_listbox, json_text, refresh_json_list))
 
     # Populate JSON list
     def refresh_json_list():
@@ -50,8 +50,25 @@ def overview_session_tab(parent_frame, refresh_setter=None):
         refresh_setter(refresh_json_list)
     return refresh_json_list
 
-def populate_json_list(json_listbox):
+def populate_json_list(json_listbox, preserve_selection=None, preserve_scroll=None):
     """Populates the listbox with JSON files from the Astro_Sessions folder, sorted by UUID."""
+    # Save current scroll position if not provided
+    if preserve_scroll is None:
+        try:
+            # Get the current scroll position (top and bottom fractions)
+            preserve_scroll = json_listbox.yview()
+        except:
+            preserve_scroll = (0.0, 0.0)
+    
+    # Save current selection if not provided
+    if preserve_selection is None:
+        try:
+            current_selection = json_listbox.curselection()
+            selected_items = [json_listbox.get(i) for i in current_selection]
+            preserve_selection = selected_items
+        except:
+            preserve_selection = []
+    
     json_listbox.delete(0, tk.END)
     
     # Get files from all session subdirectories
@@ -103,6 +120,42 @@ def populate_json_list(json_listbox):
         else:
             json_listbox.itemconfig(tk.END, foreground=color)
         json_listbox.file_origin_map[display_name] = (dirpath, fname)
+
+    # Restore selection if items still exist
+    if preserve_selection:
+        for item_name in preserve_selection:
+            try:
+                # Find the item in the new list
+                for i in range(json_listbox.size()):
+                    if json_listbox.get(i) == item_name:
+                        json_listbox.selection_set(i)
+                        break
+            except:
+                pass
+    
+    # Restore scroll position
+    try:
+        if preserve_scroll and preserve_scroll != (0.0, 0.0):
+            json_listbox.yview_moveto(preserve_scroll[0])
+    except:
+        pass
+
+def select_session_with_position_restore(json_listbox, json_text, refresh_function):
+    """Wrapper function to handle session selection while preserving scroll position."""
+    # Get current scroll position and selection before making changes
+    try:
+        current_scroll = json_listbox.yview()
+        current_selection = json_listbox.curselection()
+        selected_items = [json_listbox.get(i) for i in current_selection]
+    except:
+        current_scroll = (0.0, 0.0)
+        selected_items = []
+    
+    # Perform the session selection/moving
+    select_session(json_listbox, json_text, None)
+    
+    # Use a slight delay to ensure the file operations complete before restoring position
+    json_listbox.after(50, lambda: populate_json_list(json_listbox, preserve_selection=[], preserve_scroll=current_scroll))
 
 def on_json_select(event, json_listbox, json_text):
     """Triggered when a JSON file is selected, and displays its content."""
@@ -247,10 +300,12 @@ def select_session(json_listbox, json_text, select_button):
                         #print(f"Moved {fname} to ToDo folder.")
                     except Exception as e:
                         print(f"Error moving file {fname}: {e}")
-        # Refresh the listbox after moving all files
-        populate_json_list(json_listbox)
-        # Clear the text area and disable the select button
+        
+        # Clear the text area after moving files
         json_text.config(state=tk.NORMAL)
         json_text.delete(1.0, tk.END)
         json_text.config(state=tk.DISABLED)
+        
+        # Note: The list refresh and scroll position restoration is now handled 
+        # by select_session_with_position_restore function
 
