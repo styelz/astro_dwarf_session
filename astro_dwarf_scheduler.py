@@ -584,7 +584,20 @@ def start_STA_connection(CheckDwarfId = False):
     else:
         #init Frame : TIME and TIMEZONE
         log.notice(f'Connecting to the dwarf {config_to_dwarf_id_int(dwarf_id)} on {dwarf_ip}')
-        result = perform_time()
+        
+        # Retry logic for IP connection with delay between attempts
+        # This is needed because Dwarf 3 may need time to initialize its API after boot/firmware update
+        max_retries = 3
+        retry_delay = 2  # seconds between retries
+        
+        for attempt in range(max_retries):
+            result = perform_time()
+            if result:
+                log.notice("IP connection established successfully.")
+                break
+            elif attempt < max_retries - 1:
+                log.notice(f"Connection attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
        
         if result:
             perform_timezone()
@@ -606,8 +619,13 @@ def update_get_config_data(IPDwarf=None):
         request_addr = get_default_params_config(IPDwarf) if IPDwarf else None
         
         if request_addr:
-            # Make the HTTP GET request to the specified URL
-            response = requests.get(request_addr)
+            # Make the HTTP GET request to the specified URL with timeout
+            # Use a 5-second timeout to prevent hangs after firmware updates
+            try:
+                response = requests.get(request_addr, timeout=5)
+            except requests.Timeout:
+                log.warning("Timeout fetching Dwarf config data. Device API may not be fully initialized yet.")
+                return None
             
             # Check if the response has data
             if response.status_code == 200 and 'data' in response.json():
