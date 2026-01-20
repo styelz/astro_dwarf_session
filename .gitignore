@@ -16,3 +16,5 @@ config.lock
 /doc
 /.vscode
 /__pycache__
+config.py
+config.ini
