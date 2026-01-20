@@ -46,7 +46,7 @@ def load_configuration():
     # Ensure the list_devices.txt file exists
     if not os.path.exists(DEVICES_FILE):
         with open(DEVICES_FILE, 'w') as file:
-            pass  # Create an empty file
+            logging.info(f"Creating new devices file: {DEVICES_FILE}")
 
     # load configs in DEVICES_FILE
     devices = [CONFIG_DEFAULT]
@@ -100,7 +100,7 @@ def add_new_configuration(config_name):
     # Ensure the list_devices.txt file exists
     if not os.path.exists(DEVICES_FILE):
         with open(DEVICES_FILE, 'w') as file:
-            pass  # Create an empty file
+            logging.info(f"Creating new devices file: {DEVICES_FILE}")
 
     # Check if the config already exists in the file
     with open(DEVICES_FILE, 'r+') as file:
@@ -122,7 +122,7 @@ def add_new_configuration(config_name):
             full_path = os.path.join(SESSIONS_DIR, subdir)
             os.makedirs(full_path, exist_ok=True)
 
-    print(f"Configuration '{config_name}' added successfully with required directory structure.")
+    logging.info(f"Configuration '{config_name}' added successfully with required directory structure.")
     
 # Tooltip class
 class Tooltip:
@@ -208,7 +208,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
 
         def video_stream_worker():
             self._video_worker_running = True
-            print("Starting video stream worker")
+            logging.info("Starting video stream worker")
             while not getattr(self, '_stop_video_stream', False):
                 try:
                     # Show attempting to connect status
@@ -236,11 +236,11 @@ class AstroDwarfSchedulerApp(tk.Tk):
                                     self.after(0, self.update_video_canvas, photo)
                                     last_update = now
                             except Exception as e:
-                                print(f"Error processing video stream chunk: {e}")
+                                logging.error(f"Error processing video stream chunk: {e}")
                                 # Log image processing errors but continue
                                 pass
                         if getattr(self, '_stop_video_stream', False):
-                            print("Stopping video stream worker")
+                            logging.info("Stopping video stream worker")
                             self.after(0, lambda: self.video_canvas.config(image='', text="Video stream is off"))
                             break
                     # If we got here, stream ended or stopped, retry after short delay
@@ -272,7 +272,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
             
             # Mark worker as stopped when exiting
             self._video_worker_running = False
-            print("Video stream worker stopped")
+            logging.info("Video stream worker stopped")
 
         threading.Thread(target=video_stream_worker, daemon=True).start()
 
@@ -291,17 +291,20 @@ class AstroDwarfSchedulerApp(tk.Tk):
     
     def _perform_single_click(self):
         """Perform the actual single-click action after delay."""
-        if hasattr(self, '_stop_video_stream'):
-            if self._stop_video_stream:
-                # Turn video stream on
-                self._stop_video_stream = False
-                self.start_video_preview()
-                self.log("Video stream turned on")
-            else:
-                # Turn video stream off
-                self._stop_video_stream = True
-                self.video_canvas.config(image='', text="Video stream is off")
-                self.log("Video stream turned off")
+        if not hasattr(self, '_stop_video_stream'):
+            self._stop_video_stream = True
+            return
+            
+        if self._stop_video_stream:
+            # Turn video stream on
+            self._stop_video_stream = False
+            self.start_video_preview()
+            self.log("Video stream turned on", level="info")
+        else:
+            # Turn video stream off
+            self._stop_video_stream = True
+            self.video_canvas.config(image='', text="Video stream is off")
+            self.log("Video stream turned off", level="info")
         
     def open_video_stream_in_browser(self, event=None):
         """Open the video stream URL in the default web browser when video canvas is double-clicked."""
@@ -439,6 +442,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 
                 # Handle various invalid index cases
                 if current_index == '' or current_index is None:
+                    logging.debug("Tab index unavailable, skipping refresh")
                     return
                     
                 # Convert to integer if it's a string number
@@ -446,6 +450,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     if current_index.isdigit():
                         current_index = int(current_index)
                     else:
+                        logging.debug(f"Invalid tab index format: {current_index}, skipping refresh")
                         return  # Skip if not a valid numeric string
                 
                 # Get tab info safely
@@ -462,7 +467,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     # Only update when settings are actually changed
             except (tk.TclError, ValueError, TypeError, IndexError) as e:
                 # Handle cases where tab index is invalid or widget is destroyed
-                print(f"Error in on_tab_changed: {e}")
+                logging.error(f"Error in on_tab_changed: {e}")
                 pass
 
         self.tab_control.bind("<<NotebookTabChanged>>", on_tab_changed)
@@ -476,19 +481,31 @@ class AstroDwarfSchedulerApp(tk.Tk):
     def reset_total_runtime(self):
         self.total_session_runtime = 0
         self.session_runtime = 0
-        self.session_start_time = 0
+        self.session_start_time = datetime.now()
 
     def add_to_total_runtime(self, session_seconds):
         if not hasattr(self, 'total_session_runtime'):
             self.total_session_runtime = 0
         self.total_session_runtime += session_seconds
 
+    def safe_update_label(self, text, fg="black"):
+        """Safely update session_info_label with error handling."""
+        if (hasattr(self, 'session_info_label') and 
+            self.session_info_label is not None):
+            try:
+                if self.session_info_label.winfo_exists():
+                    self.session_info_label.config(text=text, fg=fg)
+                    return True
+            except tk.TclError as e:
+                logging.error(f"Error updating session_info_label: {e}")
+        return False
+
     # Function to get the exposure time from settings_vars
     def get_exposure_time(self, settings_vars):
         exposure_string = str(settings_vars["id_command"]["exposure"])  # Get the exposure string from settings_vars
         try:
             if not exposure_string:
-                print("exposure not defined")
+                logging.debug("exposure not defined")
                 return 0
             # Check for fractional input
             if '/' in exposure_string:
@@ -498,7 +515,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
 
             return exposure_seconds  # Return the float value directly
         except (ValueError, ZeroDivisionError):
-            print(f"Invalid exposure time: {exposure_string}. Defaulting to 0.")
+            logging.error(f"Invalid exposure time: {exposure_string}. Defaulting to 0.")
             return 0.0  # Return a default value if conversion fails
 
     def calculate_end_time(self, settings_vars):
@@ -587,7 +604,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         '''
         User wants to quit
         '''
-        print("Waiting during closing...")
+        logging.info("Waiting during closing...")
         self.log("Waiting during closing...")
 
         # Stop video stream
@@ -609,8 +626,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
         try:
             # Force disconnect
             perform_disconnect()
-        except:
-            pass  # Ignore errors during forced disconnect
+        except Exception as e:
+            logging.debug(f"Ignoring errors during forced disconnect: {e}")
     
         if self.scheduler_running:
             self.log("Force closing the scheduler...")
@@ -673,7 +690,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
     def on_combobox_change(self, event):
         global LIST_ASTRO_DIR
         selected_value = self.config_combobox.get()
-        print(f"Selected Configuration: {selected_value}")
+        logging.info(f"Selected Configuration: {selected_value}")
         setup_new_config(selected_value)
         self.show_current_config(selected_value)
         
@@ -973,18 +990,27 @@ class AstroDwarfSchedulerApp(tk.Tk):
                         f for f in os.listdir(folder_path)
                         if os.path.isfile(os.path.join(folder_path, f)) and not f.startswith('.')
                     ])
-                except Exception:
+                except Exception as e:
+                    logging.debug(f"Error counting files in {folder}: {e}")
                     count = 0
                 self.session_count_labels[folder].config(text=f" {folder}: {count}")
         self.update_session_counts = update_session_counts
 
-        # --- Periodically update session counts every 10 seconds ---
-        def periodic_update_counts():
-            self.update_session_counts()
-            self.after(10000, periodic_update_counts)
-        periodic_update_counts()
-
-        # Periodically update session information
+        # --- Unified periodic update (handles both session counts and info) ---
+        def periodic_update():
+            try:
+                if hasattr(self, 'update_session_counts'):
+                    self.update_session_counts()
+            except Exception as e:
+                logging.debug(f"Error updating session counts: {e}")
+            
+            # Schedule next update
+            self.after(10000, periodic_update)
+        
+        # Start periodic updates
+        periodic_update()
+        
+        # Initial update of session info
         self.update_session_info()
 
     def clear_log_output(self):
@@ -1496,22 +1522,17 @@ class AstroDwarfSchedulerApp(tk.Tk):
         Update the session information label with the next session's start time,
         the runtime of the current session, or a countdown to the next session.
         """
-        # Only update session_info_label if we're running in a GUI context
-        has_gui = hasattr(self, 'session_info_label') and self.session_info_label is not None
-        
-        # Additional check to ensure the widget still exists
-        if has_gui:
-            try:
-                # Test if the widget still exists by accessing its properties
-                self.session_info_label.winfo_exists()
-            except (tk.TclError, AttributeError):
-                # Widget has been destroyed, disable GUI updates
-                has_gui = False
         
         if self.scheduler_running and self.session_running:
             # Show the session info label
-            if has_gui:
-                self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))
+            try:
+                # Test if the widget still exists by accessing its properties
+                if (hasattr(self, 'session_info_label') and 
+                    self.session_info_label is not None and 
+                    self.session_info_label.winfo_exists()):
+                    self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))
+            except (tk.TclError, AttributeError) as e:
+                logging.debug(f"Error accessing session_info_label: {e}")
 
             # Check for the next session in the ToDo directory
             todo_dir_var = "CURRENT_DIR" if getattr(self, 'session_running', False) else "TODO_DIR"
@@ -1548,39 +1569,22 @@ class AstroDwarfSchedulerApp(tk.Tk):
                         total_runtime_td = timedelta(seconds=live_total_seconds)
                         total_runtime_str = str(total_runtime_td).split('.')[0]
                         self.last_text=f"Session runtime: {this_session_runtime_str} / {estimated_runtime} - Total runtime: {total_runtime_str}"
-                        if has_gui:
-                            try:
-                                self.session_info_label.config(text=self.last_text, fg="#26447A")
-                            except tk.TclError as e:
-                                print(f"Error updating session_info_label: {e}")
-                                has_gui = False
+                        self.safe_update_label(self.last_text, fg="#26447A")
 
                     except Exception as e:
-                        if has_gui:
-                            try:
-                                self.session_info_label.config(text=f"Error reading next session. {e}\n{traceback.format_exc()}")
-                            except tk.TclError as e:
-                                print(f"Error updating session_info_label: {e}")
-                                has_gui = False
+                        self.safe_update_label(f"Error reading next session. {e}\n{traceback.format_exc()}", fg="red")
             else:
-                if has_gui:
-                    try:
-                        self.session_info_label.config(text="No session directory found - Check configuration",fg="red")
-                    except tk.TclError as e:
-                        print(f"Error updating session_info_label: {e}")
-                        has_gui = False
+                self.safe_update_label("No session directory found - Check configuration", fg="red")
         else:
             # Show a helpful placeholder when scheduler is not running
-            if has_gui:
-                try:
-                    # Check if widget still exists and is valid before packing
-                    if (hasattr(self, 'session_info_label') and 
-                        self.session_info_label is not None and 
-                        self.session_info_label.winfo_exists()):
-                        self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))
-                except (tk.TclError, AttributeError) as e:
-                    print(f"Error packing session_info_label: {e}")
-                    has_gui = False  # Disable further GUI operations
+            try:
+                # Check if widget still exists and is valid before packing
+                if (hasattr(self, 'session_info_label') and 
+                    self.session_info_label is not None and 
+                    self.session_info_label.winfo_exists()):
+                    self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))
+            except (tk.TclError, AttributeError) as e:
+                logging.error(f"Error packing session_info_label: {e}")
             
             # Check if there are any sessions in ToDo to provide useful information
             todo_dir = LIST_ASTRO_DIR["TODO_DIR"]
@@ -1613,45 +1617,25 @@ class AstroDwarfSchedulerApp(tk.Tk):
                             pass
 
                     if show_countdown and self.scheduler_running:
-                        if has_gui:
-                            try:
-                                self.session_info_label.config(
-                                    text=f"Up next: {scheduled_target} - {countdown_str} at {scheduled_date} {scheduled_time}",
-                                    fg="#0078d7"
-                                )
-                            except tk.TclError as e:
-                                print(f"Error updating session_info_label: {e}")
-                                has_gui = False
-                    else:
-                        if has_gui:
-                            try:
-                                self.session_info_label.config(
-                                    text=f"Ready to start - {len(todo_files)} session(s) waiting. Click 'Start Scheduler' to begin.",
-                                    fg="green"
-                                )
-                            except tk.TclError as e:
-                                print(f"Error updating session_info_label: {e}")
-                                has_gui = False
-                else:
-                    if has_gui:
-                        try:
-                            self.session_info_label.config(
-                                text="No sessions scheduled - Create sessions in 'Create Session' tab to get started.",
-                                fg="purple"
-                            )
-                        except tk.TclError as e:
-                            print(f"Error updating session_info_label: {e}")
-                            has_gui = False
-            else:
-                if has_gui:
-                    try:
-                        self.session_info_label.config(
-                            text="Session directory not found - Check your configuration settings.",
-                            fg="red"
+                        self.safe_update_label(
+                            f"Up next: {scheduled_target} - {countdown_str} at {scheduled_date} {scheduled_time}",
+                            fg="#0078d7"
                         )
-                    except tk.TclError as e:
-                        print(f"Error updating session_info_label: {e}")
-                        has_gui = False
+                    else:
+                        self.safe_update_label(
+                            f"Ready to start - {len(todo_files)} session(s) waiting. Click 'Start Scheduler' to begin.",
+                            fg="green"
+                        )
+                else:
+                    self.safe_update_label(
+                        "No sessions scheduled - Create sessions in 'Create Session' tab to get started.",
+                        fg="purple"
+                    )
+            else:
+                self.safe_update_label(
+                    "Session directory not found - Check your configuration settings.",
+                    fg="red"
+                )
 
             if self.last_text != "":
                 self.log(self.last_text)
@@ -1665,7 +1649,7 @@ if __name__ == "__main__":
     app = AstroDwarfSchedulerApp()
 
     def handler(sig, frame):
-        print("\nExiting Astro Dwarf Scheduler.")
+        logging.info("\nExiting Astro Dwarf Scheduler.")
         app.quit()
 
     signal.signal(signal.SIGINT, handler)
@@ -1673,4 +1657,4 @@ if __name__ == "__main__":
         app.mainloop()
     except KeyboardInterrupt:
         # This is a fallback, but the handler should catch Ctrl+C
-        print("\nExiting Astro Dwarf Scheduler.")
+        logging.info("\nExiting Astro Dwarf Scheduler.")
