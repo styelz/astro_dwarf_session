@@ -323,7 +323,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.last_text = ""
         super().__init__()
                 
-        self.title("Astro Dwarf Scheduler v1.7.5")
+        self.title("Astro Dwarf Scheduler v1.7.6")
         self.geometry("810x800")
         
         # Set window icon
