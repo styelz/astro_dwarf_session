@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.6] - 2026-01-23
+
+### New Features
+- **Retry logic for IP connection**: Added automatic retry mechanism with timeout handling for Dwarf config data requests to improve connection reliability.
+
+### Improvements
+- **Enhanced logging**: Refactored logging in AstroDwarfSchedulerApp for better traceability and error handling with improved log message structure.
+- **Configuration management**: Added config.py and config.ini to .gitignore to prevent tracking of user-specific configuration files.
+- **Dependency updates**: Updated protobuf version requirement to >=4.21.0 for better compatibility.
+- **Build automation**: Version number now sourced from setupUI.py for consistent release tagging across all platforms.
+
 ## [1.7.5] - 2025-09-19
 
 ### New Features
