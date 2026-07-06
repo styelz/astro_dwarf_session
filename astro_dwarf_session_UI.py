@@ -13,7 +13,7 @@ import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import messagebox, ttk
 from astro_dwarf_scheduler import check_and_execute_commands, start_connection, start_STA_connection, setup_new_config
-from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto, perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, unset_HostMaster, set_HostMaster, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown
+from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto, perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown
 from astro_dwarf_scheduler import LIST_ASTRO_DIR, get_json_files_sorted
 
 # import data for config.py
@@ -362,7 +362,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.scheduler_running = False
         self.scheduler_stopped = True
         self.scheduler_stop_event = threading.Event()
-        self.unset_lock_device_mode = True
         self.bluetooth_connected = False
         self.result = False
         self.stellarium_connection = None
@@ -788,7 +787,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
 
         """Enable or disable buttons based on the state."""
         self.scheduler_button.config(state=scheduler_state, text=scheduler_text)
-        self.unlock_button.config(state=other_state)
         self.eq_button.config(state=other_state)
         self.polar_button.config(state=other_state)
         self.calibrate_button.config(state=other_state)
@@ -901,31 +899,28 @@ class AstroDwarfSchedulerApp(tk.Tk):
         scheduler_frame = tk.Frame(self.tab_main)
         scheduler_frame.pack(anchor="w", padx=10, pady=(10, 2), fill="x")
 
-        # Configure columns to expand equally (updated to 7 columns to include Auto Focus)
-        for i in range(7):
+        # Configure columns to expand equally
+        for i in range(6):
             scheduler_frame.grid_columnconfigure(i, weight=1)
 
         self.scheduler_button = tk.Button(scheduler_frame, text="Start Scheduler", command=self.toggle_scheduler, state=tk.DISABLED, width=18)
         self.scheduler_button.grid(row=0, column=0, padx=2, sticky="sew")
 
-        self.unlock_button = tk.Button(scheduler_frame, text="Unset as Host", command=self.unset_lock_device, state=tk.DISABLED, width=16)
-        self.unlock_button.grid(row=0, column=1, padx=2, sticky="sew")
-
         self.calibrate_button = tk.Button(scheduler_frame, text="Calibrate", command=self.start_calibration, state=tk.DISABLED, width=14)
-        self.calibrate_button.grid(row=0, column=2, padx=2, sticky="sew")
+        self.calibrate_button.grid(row=0, column=1, padx=2, sticky="sew")
 
         self.autofocus_button = tk.Button(scheduler_frame, text="Auto Focus", command=self.start_auto_focus_button, state=tk.DISABLED, width=14)
-        self.autofocus_button.grid(row=0, column=3, padx=2, sticky="sew")
+        self.autofocus_button.grid(row=0, column=2, padx=2, sticky="sew")
 
         self.polar_button = tk.Button(scheduler_frame, text="Polar Position", command=self.start_polar_position, state=tk.DISABLED, width=16)
-        self.polar_button.grid(row=0, column=4, padx=2, sticky="sew")
+        self.polar_button.grid(row=0, column=3, padx=2, sticky="sew")
 
         self.eq_button = tk.Button(scheduler_frame, text="EQ Solving", command=self.start_eq_solving, state=tk.DISABLED, width=14)
-        self.eq_button.grid(row=0, column=5, padx=2, sticky="sew")
+        self.eq_button.grid(row=0, column=4, padx=2, sticky="sew")
 
         # Power Down button (enabled if API supports power down functionality)
         self.powerdown_button = tk.Button(scheduler_frame, text="Power Down", command=self.start_powerdown, state=tk.DISABLED, width=16)
-        self.powerdown_button.grid(row=0, column=6, padx=2, sticky="sew")
+        self.powerdown_button.grid(row=0, column=5, padx=2, sticky="sew")
 
         # Log text area with vertical scrollbar
         emoji_font = ("Segoe UI Emoji", 10)
@@ -1139,12 +1134,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
         else:
             self.start_scheduler()
 
-    def unset_lock_device(self):
-        # Only start if not already running
-        if not hasattr(self, 'unset_thread') or not self.unset_thread.is_alive():
-            self.unset_thread = threading.Thread(target=self.run_unset_lock_device, daemon=True)
-            self.unset_thread.start()
-
     def start_eq_solving(self):
         # Only start if not already running
         if not hasattr(self, 'eq_thread') or not self.eq_thread.is_alive():
@@ -1284,30 +1273,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 self.stop_logHandler()  # Stop the logging handler here as well
 
             self.after(0, update_ui_after_scheduler)
-
-    def run_unset_lock_device(self):
-        try:
-            attempt = 0
-            result = False
-            while not result and attempt < 3:
-                attempt += 1
-                if self.unset_lock_device_mode:
-                    result = unset_HostMaster()
-                else:
-                    result = set_HostMaster()
-                if not result:
-                    time.sleep(10)  # Sleep for 10 seconds between checks
-            if result:
-                def update_unlock_button():
-                    if self.unset_lock_device_mode:
-                        self.unlock_button.config(text="Set as Host")
-                    else:
-                        self.unlock_button.config(text="Unset as Host")
-                    self.unset_lock_device_mode = not self.unset_lock_device_mode
-                    self.unlock_button.update()
-                self.after(0, update_unlock_button)
-        except Exception as e:
-            self.log(f"Error in unset_lock_device: {e}", level="error")
 
     def run_start_eq_solving(self):
         try:
