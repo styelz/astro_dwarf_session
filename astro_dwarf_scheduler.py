@@ -8,7 +8,7 @@ import re
 
 from datetime import datetime, timedelta
 
-from dwarf_session import start_dwarf_session
+from dwarf_session import start_dwarf_session, SessionCancelled
 
 from dwarf_python_api.lib.dwarf_utils import perform_time
 from dwarf_python_api.lib.dwarf_utils import perform_timezone
@@ -279,6 +279,37 @@ last_logged = {}  # Dictionary to track when each file was last logged
 last_hourly_log = {}  # Dictionary to track the last hourly log time for each filename
 
 
+def _idle_ui_after_session(ui_instance):
+    """Clear running-session UI state and refresh folder counts."""
+    if not ui_instance:
+        return
+    if hasattr(ui_instance, "session_running"):
+        ui_instance.session_running = False
+    if hasattr(ui_instance, "session_stop_event"):
+        ui_instance.session_stop_event.clear()
+    if hasattr(ui_instance, "_stop_video_stream"):
+        ui_instance._stop_video_stream = True
+
+    def _apply():
+        set_status = getattr(ui_instance, "_set_video_status", None)
+        if callable(set_status):
+            set_status("Video stream is off")
+        sync_stop = getattr(ui_instance, "_sync_stop_session_button", None)
+        if callable(sync_stop):
+            sync_stop()
+        update_counts = getattr(ui_instance, "update_session_counts", None)
+        if callable(update_counts):
+            update_counts()
+
+    try:
+        ui_instance.after(0, _apply)
+    except Exception:
+        try:
+            _apply()
+        except Exception:
+            pass
+
+
 # Helper to get JSON files sorted by date and time
 def get_json_files_sorted(directory):
     files_with_datetime = []
@@ -491,7 +522,34 @@ def check_and_execute_commands(ui_instance=None, stop_event=None, skip_time_chec
                         log.success(f"Session {new_filename} completed successfully")
 
                         analyze_files()
-                        
+
+                    except SessionCancelled:
+                        log.notice(f"Session {target} stopped by user")
+
+                        id_command['process'] = 'done'
+                        id_command['result'] = False
+                        id_command['message'] = 'Stopped by user'
+
+                        data_config = config_py.get_config_data()
+                        dwarf_id = data_config.get("dwarf_id")
+                        if dwarf_id:
+                            id_command['dwarf'] = f"D{config_to_dwarf_id_str(dwarf_id)}"
+                        else:
+                            id_command['dwarf'] = "Unknown"
+
+                        done_path = os.path.join(LIST_ASTRO_DIR_DEFAULT["SESSIONS_DIR"], "Done", filename)
+                        os.makedirs(os.path.dirname(done_path), exist_ok=True)
+
+                        update_process_status(command_data, 'done')
+
+                        with open(done_path, 'w') as f:
+                            json.dump(command_data, f, indent=4)
+
+                        if os.path.exists(current_path):
+                            os.remove(current_path)
+
+                        sessions_processed = True
+
                     except Exception as e:
                         # Session failed
                         log.error(f"Session {target} failed: {e}")
@@ -522,26 +580,8 @@ def check_and_execute_commands(ui_instance=None, stop_event=None, skip_time_chec
                         
                         sessions_processed = True
 
-                    # Only manage session state if we have a UI instance
-                    if ui_instance and hasattr(ui_instance, 'session_running'):
-                        if ui_instance.session_running:
-                            ui_instance.session_running = False  # Mark session as not running
-                            if hasattr(ui_instance, "session_stop_event"):
-                                ui_instance.session_stop_event.clear()
-                            if hasattr(ui_instance, '_stop_video_stream'):
-                                ui_instance._stop_video_stream = True
-                            set_status = getattr(ui_instance, "_set_video_status", None)
-                            if callable(set_status):
-                                try:
-                                    ui_instance.after(0, lambda: set_status("Video stream is off"))
-                                except Exception:
-                                    pass
-                            sync_stop = getattr(ui_instance, "_sync_stop_session_button", None)
-                            if callable(sync_stop):
-                                try:
-                                    ui_instance.after(0, sync_stop)
-                                except Exception:
-                                    pass
+                    # Always clear session UI state after this file is finished
+                    _idle_ui_after_session(ui_instance)
                                 
                     # Only process one session at a time                    
                     break

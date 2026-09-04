@@ -15,7 +15,7 @@ from tkinter import messagebox, ttk
 from astro_dwarf_scheduler import check_and_execute_commands, start_connection, start_STA_connection, setup_new_config
 from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto, perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, perform_set_preview_quality, unset_HostMaster, set_HostMaster, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown, perform_reboot
 from dwarf_python_api.lib.dwarf_utils import perform_powerOpenRGB, perform_powerCloseRGB, perform_powerIndOn, perform_powerIndOff
-from dwarf_python_api.lib.websockets_utils import get_client_status
+from dwarf_python_api.lib.websockets_utils import get_client_status, request_command_interrupt
 from astro_dwarf_scheduler import LIST_ASTRO_DIR, get_json_files_sorted
 
 # import data for config.py
@@ -32,7 +32,7 @@ from tabs import settings
 from tabs import create_session
 from tabs import overview_session
 from tabs import result_session
-from ui.theme import apply_theme, load_appearance, palette, fonts, style_log_text
+from ui.theme import apply_theme, load_appearance, palette, fonts, style_log_text, close_date_entry_popups
 from ui.widgets import (
     VIDEO_ASPECT,
     ScrollingLabel,
@@ -46,6 +46,7 @@ from ui.widgets import (
     tab_bar,
     title_bar,
 )
+from app_version import get_app_version
 
 # import directories
 from astro_dwarf_scheduler import CONFIG_DEFAULT, BASE_DIR, LIST_ASTRO_DIR_DEFAULT
@@ -54,6 +55,14 @@ import os
 # Devices and sessions directories now use BASE_DIR from scheduler (AppData-aware)
 DEVICES_DIR = os.path.join(BASE_DIR, "Devices_Sessions")
 DEVICES_FILE = os.path.join(DEVICES_DIR, 'list_devices.txt')
+WINDOW_NAME = "Astro Dwarf Scheduler"
+
+
+def _window_title():
+    try:
+        return f"{WINDOW_NAME}  v{get_app_version()}"
+    except Exception:
+        return WINDOW_NAME
 
 def load_configuration():
     # Ensure the devices directory exists
@@ -270,6 +279,43 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.video_stream_url = f"http://{dwarf_ip}:8092/mainstream"
         return self.video_stream_url
 
+    def _video_session_active(self):
+        return bool(getattr(self, "session_running", False))
+
+    def _video_should_retry(self):
+        """Keep trying while a session is live, or briefly after a manual/action start."""
+        if getattr(self, "_stop_video_stream", True):
+            return False
+        if self._video_session_active():
+            return True
+        started = getattr(self, "_video_preview_started_at", 0) or 0
+        return (time.time() - started) < 20
+
+    def _video_stream_is_available(self, url, timeout=1.2):
+        """True only when the MJPEG endpoint is actually sending data."""
+        response = None
+        try:
+            response = requests.get(url, stream=True, timeout=(timeout, timeout))
+            if response.status_code != 200:
+                return False
+            for chunk in response.iter_content(chunk_size=1024):
+                return bool(chunk)
+            return False
+        except Exception:
+            return False
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+
+    def _stop_idle_video_preview(self, status="Click to start the stream"):
+        """Leave preview off without retrying or logging that the stream is down."""
+        self._stop_video_stream = True
+        self._reconnect_video_stream = False
+        self.after(0, lambda: self._set_video_status(status))
+
     def _video_wait(self, seconds):
         """Sleep in short slices so stop/reconnect flags are noticed quickly."""
         deadline = time.time() + seconds
@@ -278,12 +324,15 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 return False
             if getattr(self, "_reconnect_video_stream", False):
                 return False
+            if not self._video_should_retry():
+                return False
             time.sleep(0.1)
         return True
 
     def reconnect_video_preview(self):
         """Drop the current HTTP pull so the worker opens a fresh socket."""
         self._stop_video_stream = False
+        self._video_preview_started_at = time.time()
         if getattr(self, "_video_worker_running", False):
             self._reconnect_video_stream = True
             self.log("Reconnecting video stream")
@@ -298,9 +347,10 @@ class AstroDwarfSchedulerApp(tk.Tk):
             return
 
         self._stop_video_stream = False
+        self._video_preview_started_at = time.time()
         self._resolve_video_stream_url()
 
-        if ensure_live and not getattr(self, "session_running", False):
+        if ensure_live and not self._video_session_active():
             self._request_live_mode = True
 
         if getattr(self, "_video_worker_running", False):
@@ -311,7 +361,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self._video_worker_running = True
             print("Starting video stream worker")
             current_url = self._resolve_video_stream_url()
-            self.log(f"Video stream: {current_url}")
+            announced_url = False
 
             while not getattr(self, "_stop_video_stream", False):
                 self._reconnect_video_stream = False
@@ -319,21 +369,45 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 if getattr(self, "_request_live_mode", False):
                     self._request_live_mode = False
                     self._ensure_live_preview_mode()
+
+                in_session = self._video_session_active()
+                if not self._video_stream_is_available(current_url):
+                    if in_session or self._video_should_retry():
+                        status = (
+                            "Waiting for live stream..."
+                            if in_session
+                            else "Starting preview..."
+                        )
+                        self.after(0, lambda text=status: self._set_video_status(text))
+                        self._video_wait(2 if in_session else 1.5)
+                        if getattr(self, "_stop_video_stream", False):
+                            self.after(0, lambda: self._set_video_status("Video stream is off"))
+                            break
+                        if getattr(self, "_reconnect_video_stream", False):
+                            continue
+                        if not self._video_should_retry():
+                            self._stop_idle_video_preview()
+                            break
+                        continue
+                    self._stop_idle_video_preview()
+                    break
+
+                if not announced_url:
+                    announced_url = True
+                    self.log(f"Video stream: {current_url}")
+
                 stream = None
                 try:
-                    self.after(0, lambda: self._set_video_status("Attempting to connect..."))
+                    self.after(0, lambda: self._set_video_status("Connecting..."))
                     stream = requests.get(
                         current_url, stream=True, timeout=(5, 3)
                     )
-                    if stream.status_code != 200:
-                        self.log(
-                            f"Video HTTP {stream.status_code} from {current_url}",
-                            level="warning",
-                        )
+                    status_code = stream.status_code
+                    if status_code != 200:
                         stream.close()
                         stream = None
                         raise requests.exceptions.HTTPError(
-                            f"HTTP {stream.status_code} for {current_url}"
+                            f"HTTP {status_code} for {current_url}"
                         )
 
                     self.after(
@@ -352,7 +426,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
                             print("Stopping video stream worker")
                             break
                         if getattr(self, "_reconnect_video_stream", False):
-                            self.log("Reconnecting video stream")
                             break
 
                         if chunk:
@@ -385,24 +458,12 @@ class AstroDwarfSchedulerApp(tk.Tk):
                                     )
 
                         if not got_frame and (time.time() - connect_time) > 5:
-                            self.log(
-                                "No video frames received, reconnecting",
-                                level="warning",
-                            )
-                            self.after(
-                                0,
-                                lambda: self._set_video_status(
-                                    "No frames yet, reconnecting..."
-                                ),
-                            )
-                            self._reconnect_video_stream = True
                             break
-                except requests.exceptions.RequestException as e:
-                    if not getattr(self, "_stop_video_stream", False):
-                        self.log(f"Video stream error: {e}", level="warning")
+                except requests.exceptions.RequestException:
+                    pass
                 except Exception as e:
                     if not getattr(self, "_stop_video_stream", False):
-                        self.log(f"Video stream error: {e}", level="warning")
+                        print(f"Video stream error: {e}")
                 finally:
                     if stream is not None:
                         try:
@@ -417,22 +478,25 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 if getattr(self, "_reconnect_video_stream", False):
                     continue
 
-                self.after(0, lambda: self._set_video_status("Connection failed"))
-                if not self._video_wait(2):
-                    if getattr(self, "_stop_video_stream", False):
-                        self.after(0, lambda: self._set_video_status("Video stream is off"))
-                        break
+                if self._video_session_active() or self._video_should_retry():
+                    status = (
+                        "Waiting for live stream..."
+                        if self._video_session_active()
+                        else "Starting preview..."
+                    )
+                    self.after(0, lambda text=status: self._set_video_status(text))
+                    self._video_wait(2)
                     continue
 
-                self.after(0, lambda: self._set_video_status("Retrying connection..."))
-                if not self._video_wait(3):
-                    if getattr(self, "_stop_video_stream", False):
-                        self.after(0, lambda: self._set_video_status("Video stream is off"))
-                        break
+                self._stop_idle_video_preview()
+                break
 
             self._video_worker_running = False
             print("Video stream worker stopped")
-            if not getattr(self, "_stop_video_stream", False):
+            if (
+                not getattr(self, "_stop_video_stream", True)
+                and self._video_session_active()
+            ):
                 self.after(0, lambda: self.start_video_preview(ensure_live=False))
 
         threading.Thread(target=video_stream_worker, daemon=True).start()
@@ -521,7 +585,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.last_text = ""
         super().__init__()
                 
-        self.title("Astro Dwarf Scheduler")
+        self.title(_window_title())
         self.geometry("960x840")
         self.minsize(900, 700)
         apply_theme(self, load_appearance())
@@ -570,11 +634,12 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self._video_worker_running = False
         self._reconnect_video_stream = False
         self._request_live_mode = False
+        self._video_preview_started_at = 0
         self._single_click_timer = None
 
         self.title_bar, self._max_btn = title_bar(
             self,
-            "Astro Dwarf Scheduler",
+            _window_title(),
             on_minimize=self.minimize_window,
             on_maximize=self.toggle_maximize,
             on_close=self.quit_method,
@@ -705,6 +770,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.bind("<Map>", self._on_window_map)
 
     def _on_custom_tab(self, tab_id):
+        close_date_entry_popups(self)
         try:
             index = self._tab_ids.index(tab_id)
             self.tab_control.select(index)
@@ -1182,6 +1248,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
             anchor="center",
         )
         self.video_canvas._theme_role = "video"
+        self.video_canvas._theme_font = "body"
         self.video_canvas.pack(fill="both", expand=True)
         self.video_canvas.bind("<Button-1>", self.toggle_video_stream)
         self.video_canvas.bind("<Double-Button-1>", self.open_video_stream_in_browser)
@@ -1267,6 +1334,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
 
         self.log_text = tk.Text(log_frame, wrap=tk.WORD, height=15, font=fonts["log"], relief="flat")
         self.log_text._theme_role = "log"
+        self.log_text._theme_font = "log"
         log_scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_scrollbar.set)
         self.log_text.grid(row=0, column=0, sticky="nsew")
@@ -1553,6 +1621,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 return
 
         self.session_stop_event.set()
+        self.session_running = False
+        self._sync_stop_session_button()
         if not hasattr(self, "stop_astro_photo") or not self.stop_astro_photo.is_alive():
             self.stop_astro_photo = threading.Thread(
                 target=self._stop_current_session, daemon=True
@@ -1565,12 +1635,10 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.log("Stopping current session...")
         self.session_stop_event.set()
         try:
-            if perform_stopAstroPhoto():
-                self.log("Stop capture command sent", level="success")
-            else:
-                self.log("Stop capture command failed or was skipped", level="warning")
+            request_command_interrupt()
+            self.log("Stop requested; waiting for the session to finish...")
         except Exception as e:
-            self.log(f"Error stopping session: {e}", level="error")
+            self.log(f"Error requesting session stop: {e}", level="error")
 
     def toggle_lights(self):
         # Only start if not already running

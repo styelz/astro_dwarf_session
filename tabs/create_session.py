@@ -19,7 +19,7 @@ import threading
 from astro_dwarf_scheduler import BASE_DIR
 import configparser
 import sys
-from ui.theme import style_date_entry, apply_theme, load_appearance, palette
+from ui.theme import style_date_entry, apply_theme, load_appearance, palette, close_date_entry_popups
 from ui.widgets import card, section_header, hint_label, form_row
 
 def list_available_names(instance):
@@ -1009,6 +1009,12 @@ def create_session_tab(tab_create_session, settings_vars, config_vars):
     date_var = _var("date")
     date_entry = DateEntry(session_inner, textvariable=date_var, date_pattern="yyyy-mm-dd")
     style_date_entry(date_entry)
+
+    def _hide_date_popup(_event=None):
+        close_date_entry_popups(tab_create_session.winfo_toplevel())
+
+    date_entry.bind("<Unmap>", _hide_date_popup, add="+")
+    tab_create_session.bind("<Unmap>", _hide_date_popup, add="+")
     form_row(session_inner, 2, "Date (YYYY-MM-DD)", date_entry)
     form_row(
         session_inner,

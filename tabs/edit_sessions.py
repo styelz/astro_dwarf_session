@@ -5,7 +5,7 @@ from tkinter import ttk, messagebox
 import re
 from astro_dwarf_scheduler import get_json_files_sorted
 import time
-from ui.theme import palette
+from ui.theme import palette, style_listbox
 from ui.widgets import card, section_header, hint_label
 
 def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
@@ -20,6 +20,7 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     section_header(list_inner, "Available Sessions").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
     listbox = tk.Listbox(list_inner, width=32, height=12, selectmode=tk.EXTENDED, relief="flat", highlightthickness=0)
+    style_listbox(listbox)
     listbox.grid(row=1, column=0, sticky="nsew")
     scrollbar = ttk.Scrollbar(list_inner, orient="vertical", command=listbox.yview)
     scrollbar.grid(row=1, column=1, sticky="ns")
@@ -69,6 +70,7 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     has_unsaved_changes = {'flag': False}  # Track if there are unsaved changes
 
     def refresh_list():
+        style_listbox(listbox)
         listbox.delete(0, tk.END)
         for fname in get_json_files_sorted(session_dir):
             listbox.insert(tk.END, fname)

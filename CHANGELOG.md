@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.0.0] - 2026-09-05
+
+### New Features
+- **Themed interface**: Full dark and light themes with a custom title bar, card layout, and shared widget styles.
+- **Appearance settings**: Theme choice is saved and restored on launch from Settings.
+- **Font customization**: Choose font family and heading, body, and small text sizes; changes apply immediately.
+- **Window version**: The current product version is shown in the window header.
+- **Session details**: Click a Results row to open a themed detail dialog for that session.
+- **Solar shooting modes**: Sun, Moon, and Planet modes, with the correct shooting mode used for solar GOTOs.
+
+### Improvements
+- **V3 camera API**: Camera read/write now uses Dwarflab V3 HTTP/API helpers (IR filter, stack count/binning, camera params).
+- **Connection setup**: Location is applied on connect.
+- **EQ solving**: Force an infinite autofocus before EQ solving.
+- **Wide captures**: Re-enter Astro/DSO mode before wide-lens captures.
+- **Live preview**: Video preview stays in sync while sessions are running.
+- **Device IDs**: Dwarf ID checks updated for current device support.
+
+### Packaging
+- **Single version source**: Apps, Windows installer, and GitHub releases now share one version from `CHANGELOG.md` (or `APP_VERSION`).
+
 ## [1.7.6] - 2025-10-15
 
 ### Improvements

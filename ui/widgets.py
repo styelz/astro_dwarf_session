@@ -2,6 +2,7 @@
 
 import ctypes
 import sys
+import threading
 import tkinter as tk
 from tkinter import ttk
 
@@ -60,6 +61,7 @@ class ScrollingLabel(tk.Canvas):
         )
         self._fg = fg
         self._font = font
+        self._theme_font = "body"
         self._text = text or ""
         self._x = 4.0
         self._direction = -1
@@ -180,6 +182,7 @@ def status_label(parent, folder, count=0):
     )
     label._theme_keep_fg = True
     label._theme_role = "status"
+    label._theme_font = "body"
     return label
 
 
@@ -189,6 +192,364 @@ def form_row(parent, row, label_text, widget, label_width=22, pady=4):
     widget.grid(row=row, column=1, sticky="ew", pady=pady)
     parent.grid_columnconfigure(1, weight=1)
     return label, widget
+
+
+class SearchableCombobox(ttk.Frame):
+    """Entry plus in-window dropdown list that filters or fetches as you type."""
+
+    def __init__(
+        self,
+        parent,
+        values=(),
+        textvariable=None,
+        height=10,
+        empty_message="No matches",
+        fetch_values=None,
+        on_select=None,
+        min_query_length=0,
+        search_delay_ms=350,
+        **kwargs
+    ):
+        super().__init__(parent, style="Card.TFrame", **kwargs)
+        self._all_values = [str(value) for value in values]
+        self._filtered = list(self._all_values)
+        self._var = textvariable if textvariable is not None else tk.StringVar()
+        self._height = height
+        self._empty_message = empty_message
+        self._fetch_values = fetch_values
+        self._on_select = on_select
+        self._min_query_length = min_query_length
+        self._search_delay_ms = search_delay_ms
+        self._popup = None
+        self._listbox = None
+        self._close_bind = None
+        self._configure_bind = None
+        self._ignore_click = False
+        self._fetch_job = None
+        self._fetch_token = 0
+        self._nav_keys = {"Up", "Down", "Return", "KP_Enter", "Escape", "Tab"}
+
+        self.columnconfigure(0, weight=1)
+        self._entry = ttk.Entry(self, textvariable=self._var)
+        self._entry.grid(row=0, column=0, sticky="ew")
+        self._arrow = ttk.Button(
+            self, text="▾", width=2, command=self.toggle_popup, takefocus=False, style="Compact.TButton"
+        )
+        self._arrow.grid(row=0, column=1, sticky="ns", padx=(2, 0))
+
+        self._entry.bind("<KeyRelease>", self._on_keyrelease)
+        self._entry.bind("<Down>", self._on_arrow_down)
+        self._entry.bind("<Up>", self._on_arrow_up)
+        self._entry.bind("<Return>", self._on_enter)
+        self._entry.bind("<KP_Enter>", self._on_enter)
+        self._entry.bind("<Escape>", self._on_escape)
+        self.bind("<Destroy>", self._on_destroy)
+
+    @property
+    def values(self):
+        return list(self._all_values)
+
+    @values.setter
+    def values(self, values):
+        self._all_values = [str(value) for value in values]
+        self._filtered = list(self._all_values)
+        if self._popup_open():
+            self._fill_listbox()
+
+    def get(self):
+        return self._var.get()
+
+    def set(self, value):
+        self._var.set(value)
+
+    def toggle_popup(self):
+        if self._popup_open():
+            self._close_popup()
+            return
+        self._ignore_click = True
+        self._open_popup()
+        self._refresh_list(self._var.get(), searching=bool(self._fetch_values))
+        self._entry.focus_set()
+        self.after_idle(self._clear_ignore_click)
+
+    def _clear_ignore_click(self):
+        self._ignore_click = False
+
+    def _popup_open(self):
+        return self._popup is not None and self._popup.winfo_exists()
+
+    def _on_keyrelease(self, event):
+        if event.keysym in self._nav_keys:
+            return
+        self._refresh_list(self._var.get(), searching=bool(self._fetch_values))
+
+    def _on_arrow_down(self, _event=None):
+        if not self._popup_open():
+            self.toggle_popup()
+            return "break"
+        self._move_selection(1)
+        return "break"
+
+    def _on_arrow_up(self, _event=None):
+        if not self._popup_open():
+            self.toggle_popup()
+            return "break"
+        self._move_selection(-1)
+        return "break"
+
+    def _on_enter(self, _event=None):
+        if self._popup_open() and self._filtered:
+            self._commit_selection()
+            return "break"
+        self._close_popup()
+        return "break"
+
+    def _on_escape(self, _event=None):
+        if self._popup_open():
+            self._close_popup()
+            return "break"
+        return None
+
+    def _on_destroy(self, _event=None):
+        self._close_popup()
+
+    def _refresh_list(self, query, searching=False):
+        if searching:
+            self._schedule_fetch(query)
+            return
+        self._filtered = self._matching_values(query)
+        self._open_popup()
+        self._fill_listbox()
+
+    def _schedule_fetch(self, query):
+        if self._fetch_job is not None:
+            try:
+                self.after_cancel(self._fetch_job)
+            except tk.TclError:
+                pass
+        self._open_popup()
+        trimmed = (query or "").strip()
+        if len(trimmed) < self._min_query_length:
+            self._filtered = []
+            self._fill_listbox(message=f"Type at least {self._min_query_length} characters to search")
+            return
+        self._filtered = []
+        self._fill_listbox(message="Searching...")
+        self._fetch_job = self.after(self._search_delay_ms, lambda: self._start_fetch(trimmed))
+
+    def _start_fetch(self, query):
+        self._fetch_token += 1
+        token = self._fetch_token
+
+        def worker():
+            try:
+                results = list(self._fetch_values(query) or [])
+            except Exception:
+                results = []
+            try:
+                self.after(0, lambda: self._apply_fetched(token, results))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_fetched(self, token, results):
+        if token != self._fetch_token:
+            return
+        self._all_values = [str(item) for item in results]
+        self._filtered = list(self._all_values)
+        if not self._popup_open():
+            self._open_popup()
+        self._fill_listbox()
+
+    def _open_popup(self):
+        if self._popup_open():
+            self._position_popup()
+            return
+        colors = palette
+        root = self.winfo_toplevel()
+        popup = tk.Frame(root, bg=colors["border"], highlightthickness=0, bd=0)
+        popup._theme_role = "card_rim"
+        inner = tk.Frame(popup, bg=colors["input_bg"], highlightthickness=0, bd=0)
+        inner.pack(fill="both", expand=True, padx=1, pady=1)
+        inner._theme_role = "card"
+
+        listbox = tk.Listbox(
+            inner,
+            height=self._height,
+            activestyle="none",
+            exportselection=False,
+            takefocus=0,
+            font=fonts["body"],
+            bg=colors["input_bg"],
+            fg=colors["input_fg"],
+            selectbackground=colors["select_bg"],
+            selectforeground=colors["select_fg"],
+            highlightthickness=0,
+            bd=0,
+            relief="flat",
+        )
+        scrollbar = ttk.Scrollbar(inner, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=scrollbar.set)
+        listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        listbox.bind("<ButtonRelease-1>", lambda _e: self._commit_selection())
+        listbox.bind("<Double-Button-1>", lambda _e: self._commit_selection())
+
+        self._popup = popup
+        self._listbox = listbox
+        self._position_popup()
+        popup.lift()
+        self._close_bind = root.bind("<Button-1>", self._on_global_click, add="+")
+        self._configure_bind = root.bind("<Configure>", self._on_root_configure, add="+")
+
+    def _on_root_configure(self, _event=None):
+        if self._popup_open():
+            self._position_popup()
+
+    def _position_popup(self):
+        if not self._popup_open():
+            return
+        self.update_idletasks()
+        root = self.winfo_toplevel()
+        width = max(self.winfo_width(), 240)
+        rows = max(len(self._filtered), 1)
+        height = min(self._height, rows) * 22 + 8
+        height = max(min(height, 280), 72)
+        x = self.winfo_rootx() - root.winfo_rootx()
+        y = self.winfo_rooty() - root.winfo_rooty() + self.winfo_height()
+        root_h = root.winfo_height()
+        if y + height > root_h - 8:
+            above = self.winfo_rooty() - root.winfo_rooty() - height
+            if above >= 8:
+                y = above
+        self._popup.place(x=x, y=y, width=width, height=height)
+        self._popup.lift()
+
+    def _fill_listbox(self, message=None):
+        if not self._popup_open():
+            return
+        self._listbox.delete(0, tk.END)
+        if self._filtered:
+            self._listbox.insert(tk.END, *self._filtered)
+            current = (self._var.get() or "").strip()
+            try:
+                index = self._filtered.index(current)
+            except ValueError:
+                index = 0
+            self._listbox.selection_clear(0, tk.END)
+            self._listbox.selection_set(index)
+            self._listbox.activate(index)
+            self._listbox.see(index)
+        else:
+            self._listbox.insert(tk.END, message or self._empty_message)
+            self._listbox.selection_clear(0, tk.END)
+        self._position_popup()
+
+    def _matching_values(self, query):
+        raw = (query or "").strip().lower().replace("_", " ")
+        if not raw:
+            return list(self._all_values)
+        starts = []
+        city_starts = []
+        contains = []
+        for name in self._all_values:
+            lower = name.lower()
+            spaced = lower.replace("_", " ").replace("/", " ")
+            city = lower.rsplit("/", 1)[-1].replace("_", " ")
+            if lower.startswith(raw) or spaced.startswith(raw):
+                starts.append(name)
+            elif city.startswith(raw):
+                city_starts.append(name)
+            elif raw in spaced or raw in lower:
+                contains.append(name)
+        return starts + city_starts + contains
+
+    def _move_selection(self, step):
+        if not self._popup_open() or not self._filtered:
+            return
+        size = self._listbox.size()
+        if size <= 0:
+            return
+        current = self._listbox.curselection()
+        index = int(current[0]) if current else -1 if step > 0 else size
+        index = max(0, min(size - 1, index + step))
+        self._listbox.selection_clear(0, tk.END)
+        self._listbox.selection_set(index)
+        self._listbox.activate(index)
+        self._listbox.see(index)
+
+    def _commit_selection(self):
+        if not self._popup_open() or not self._filtered:
+            self._close_popup()
+            return
+        current = self._listbox.curselection()
+        if not current:
+            self._close_popup()
+            return
+        value = self._listbox.get(current[0])
+        if value in (self._empty_message, "Searching...") or value.startswith("Type at least"):
+            return
+        self._var.set(value)
+        self._close_popup()
+        self._entry.icursor(tk.END)
+        if self._on_select:
+            self._on_select(value)
+
+    def _on_global_click(self, event):
+        if self._ignore_click or not self._popup_open():
+            return
+        widget = event.widget
+        if widget in (self, self._entry, self._arrow, self._listbox, self._popup):
+            return
+        try:
+            if str(widget).startswith(str(self._popup)) or str(widget).startswith(str(self)):
+                return
+        except tk.TclError:
+            pass
+        x, y = event.x_root, event.y_root
+        if self._point_in(self, x, y) or self._point_in(self._popup, x, y):
+            return
+        self._close_popup()
+
+    def _close_popup(self):
+        root = None
+        try:
+            root = self.winfo_toplevel()
+        except tk.TclError:
+            pass
+        if self._close_bind and root is not None:
+            try:
+                root.unbind("<Button-1>", self._close_bind)
+            except tk.TclError:
+                pass
+        if self._configure_bind and root is not None:
+            try:
+                root.unbind("<Configure>", self._configure_bind)
+            except tk.TclError:
+                pass
+        self._close_bind = None
+        self._configure_bind = None
+        if self._popup is not None:
+            try:
+                self._popup.place_forget()
+                self._popup.destroy()
+            except tk.TclError:
+                pass
+        self._popup = None
+        self._listbox = None
+
+    @staticmethod
+    def _point_in(widget, x, y):
+        try:
+            if not widget.winfo_exists():
+                return False
+            left = widget.winfo_rootx()
+            top = widget.winfo_rooty()
+            return left <= x <= left + widget.winfo_width() and top <= y <= top + widget.winfo_height()
+        except tk.TclError:
+            return False
 
 
 def panel_host(parent, padx=12, pady=12):
@@ -253,6 +614,7 @@ def title_bar(parent, title, on_minimize, on_maximize, on_close):
         bar, text=title, bg=palette["card"], fg=palette["fg"], font=fonts["heading"], bd=0
     )
     title_label._theme_role = "titlebar"
+    title_label._theme_font = "heading"
     title_label.pack(side="left", padx=14, pady=8)
 
     close_btn = _chrome_button(bar, "✕", on_close, danger=True)
@@ -310,6 +672,7 @@ def _chrome_button(parent, text, command, danger=False):
         cursor="hand2",
     )
     button._theme_role = "titlebar"
+    button._theme_font = "body"
 
     def on_enter(_event):
         if danger:
@@ -415,6 +778,7 @@ def tab_bar(parent, items, on_select, initial=None):
             bd=0,
         )
         button._theme_role = "tab"
+        button._theme_font = "body"
         button._tab_selected = False
         button.pack()
         line = tk.Frame(cell, height=2, bg=palette["bg"], highlightthickness=0, bd=0)

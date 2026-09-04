@@ -6,7 +6,7 @@ from tkinter import ttk
 from datetime import datetime
 
 from astro_dwarf_scheduler import LIST_ASTRO_DIR_DEFAULT
-from ui.theme import status_color
+from ui.theme import status_color, palette, style_listbox
 from ui.widgets import card, section_header, hint_label
 
 def overview_session_tab(parent_frame, refresh_setter=None):
@@ -23,6 +23,7 @@ def overview_session_tab(parent_frame, refresh_setter=None):
     section_header(list_inner, "Available Sessions").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
     json_listbox = tk.Listbox(list_inner, height=8, selectmode=tk.EXTENDED, relief="flat", highlightthickness=0)
+    style_listbox(json_listbox)
     json_listbox.grid(row=1, column=0, columnspan=3, sticky="nsew")
     list_scroll = ttk.Scrollbar(list_inner, orient="vertical", command=json_listbox.yview)
     list_scroll.grid(row=1, column=3, sticky="ns")
@@ -46,6 +47,13 @@ def overview_session_tab(parent_frame, refresh_setter=None):
     section_header(detail_inner, "Session details").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
     json_text = tk.Text(detail_inner, state=tk.DISABLED, relief="flat", highlightthickness=0)
+    json_text.configure(
+        bg=palette["input_bg"],
+        fg=palette["fg"],
+        insertbackground=palette["fg"],
+        selectbackground=palette["select_bg"],
+        selectforeground=palette["select_fg"],
+    )
     json_text.grid(row=1, column=0, sticky="nsew")
     detail_scroll = ttk.Scrollbar(detail_inner, orient="vertical", command=json_text.yview)
     detail_scroll.grid(row=1, column=1, sticky="ns")
@@ -63,6 +71,7 @@ def overview_session_tab(parent_frame, refresh_setter=None):
 
 def populate_json_list(json_listbox):
     """Populates the listbox with JSON files from the Astro_Sessions folder, sorted by UUID."""
+    style_listbox(json_listbox)
     json_listbox.delete(0, tk.END)
     
     # Get files from all session subdirectories
@@ -117,10 +126,10 @@ def populate_json_list(json_listbox):
     for uuid, fname, datetime_str, dirpath, label, color, font in all_files:
         display_name = fname + label
         json_listbox.insert(tk.END, display_name)
+        item_opts = {"foreground": color, "background": palette["input_bg"]}
         if font:
-            json_listbox.itemconfig(tk.END, foreground=color, font=font)
-        else:
-            json_listbox.itemconfig(tk.END, foreground=color)
+            item_opts["font"] = font
+        json_listbox.itemconfig(tk.END, **item_opts)
         json_listbox.file_origin_map[display_name] = (dirpath, fname)
 
 def on_json_select(event, json_listbox, json_text):

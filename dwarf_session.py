@@ -16,6 +16,8 @@ from dwarf_python_api.lib.dwarf_utils import parse_ra_to_float
 from dwarf_python_api.lib.dwarf_utils import parse_dec_to_float
 from dwarf_python_api.lib.dwarf_utils import perform_takeAstroPhoto
 from dwarf_python_api.lib.dwarf_utils import perform_waitEndAstroPhoto, perform_waitRetryEndAstroPhoto
+from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto
+from dwarf_python_api.lib.dwarf_utils import perform_stopAstroWidePhoto
 from dwarf_python_api.lib.dwarf_utils import perform_set_astro_exposure_by_name_v3
 from dwarf_python_api.lib.dwarf_utils import perform_set_astro_gain_v3
 from dwarf_python_api.lib.dwarf_utils import perform_set_ir_filter_v3
@@ -108,6 +110,38 @@ STEP_DESCRIPTIONS = {
     "step_16": "Stop Tele and Wide Astro photo Session",
 }
 
+class SessionCancelled(Exception):
+    """Raised when the user or scheduler requests the current session to stop."""
+    pass
+
+
+def _stop_captures_best_effort():
+    """Stop tele/wide capture if one is actually running, without racing an in-flight wait."""
+    try:
+        from dwarf_python_api.lib.websockets_utils import (
+            get_client_status,
+            clear_command_interrupt,
+            flush_pending_results,
+        )
+        clear_command_interrupt()
+        flush_pending_results()
+        status = get_client_status()
+        if isinstance(status, str):
+            try:
+                status = json.loads(status)
+            except Exception:
+                status = {}
+        full = status.get("fullStatus", {}) if isinstance(status, dict) else {}
+        tele = bool(full.get("takePhotoStarted") or full.get("AstroCapture"))
+        wide = bool(full.get("takeWidePhotoStarted") or full.get("AstroWideCapture"))
+        if tele or not full:
+            perform_stopAstroPhoto()
+        if wide:
+            perform_stopAstroWidePhoto()
+    except Exception as e:
+        log.debug(f"Best-effort stop capture after cancel failed: {e}")
+
+
 def try_attemps (function, function_succeed_message, max_attempts = 3, interrupted=lambda: False):
     # Try to perform the action up to 3 times by default
     attempts = 0
@@ -119,6 +153,7 @@ def try_attemps (function, function_succeed_message, max_attempts = 3, interrupt
             return False
 
         continue_action = function()  # action to test
+        interrupted()
 
         if continue_action:
             if function_succeed_message:
@@ -150,12 +185,21 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
     try:
         def interrupted():
             if stop_event is not None and stop_event.is_set():
-                return True
+                raise SessionCancelled("Stopped by user")
             if ui_instance is not None:
                 session_stop = getattr(ui_instance, "session_stop_event", None)
                 if session_stop is not None and session_stop.is_set():
-                    return True
+                    raise SessionCancelled("Stopped by user")
             return False
+
+        def wait_seconds(seconds):
+            end = time.time() + float(seconds or 0)
+            while True:
+                remaining = end - time.time()
+                if remaining <= 0:
+                    return
+                interrupted()
+                time.sleep(min(0.2, remaining))
         
         data_config = config_py.get_config_data()
         dwarf_id = "2"  # Default Dwarf ID
@@ -266,7 +310,8 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
 
         # Session initialization
         log.notice("######################")
-        continue_action = try_attemps(perform_time, "Init succeeded.")
+        continue_action = try_attemps(perform_time, "Init succeeded.", interrupted=interrupted)
+        interrupted()
         verify_action(continue_action, "step_0")
 
         # V3: SET_LOCATION and CMD_GLOBAL_TASK_GET_DEVICE_STATE_INFO are
@@ -279,6 +324,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
 
         # Go Live
         continue_action = perform_GoLive()
+        interrupted()
         verify_action(continue_action, "step_1a")
         _reconnect_ui_preview(ui_instance)
 
@@ -307,6 +353,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
         else:
             log.notice("Entering Astro/DSO shooting mode")
             continue_action = perform_enter_astro_mode()
+        interrupted()
         verify_action(continue_action, "step_1a")
         _reconnect_ui_preview(ui_instance)
 
@@ -315,7 +362,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             wait_before = program.get('auto_focus', {}).get('wait_before', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_before} seconds")
-            time.sleep(wait_before)
+            wait_seconds(wait_before)
             if interrupted(): return
             log.notice("Processing automatic autofocus")
             continue_action = perform_start_autofocus(False)
@@ -324,7 +371,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             wait_after = program.get('auto_focus', {}).get('wait_after', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            wait_seconds(wait_after)
             if interrupted(): return
 
         # Infinite Focus
@@ -332,7 +379,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             wait_before = program.get('infinite_focus', {}).get('wait_before', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_before} seconds")
-            time.sleep(wait_before)
+            wait_seconds(wait_before)
             if interrupted(): return
             log.notice("Processing infinite autofocus")
             continue_action = perform_start_autofocus(True)
@@ -341,7 +388,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             wait_after = program.get('infinite_focus', {}).get('wait_after', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            wait_seconds(wait_after)
             if interrupted(): return
 
         # EQ Solving - Fix: Execute when eq_solving is True
@@ -356,18 +403,18 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
                 continue_action = perform_start_autofocus(True)
                 if interrupted(): return
                 verify_action(continue_action, "step_1d")
-                time.sleep(5)
+                wait_seconds(5)
 
             continue_action = perform_stop_goto()
             if interrupted(): return
             verify_action(continue_action, "step_6")
             if interrupted(): return
-            time.sleep(5)
+            wait_seconds(5)
             if interrupted(): return
             wait_before = program.get('eq_solving', {}).get('wait_before', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_before} seconds")
-            time.sleep(wait_before)
+            wait_seconds(wait_before)
             if interrupted(): return
             log.notice("Processing EQ Solving")
             continue_action = start_polar_align()
@@ -376,7 +423,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             wait_after = program.get('eq_solving', {}).get('wait_after', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            wait_seconds(wait_after)
             if interrupted(): return
 
         # Calibration
@@ -404,22 +451,23 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             if interrupted(): return
             verify_action(continue_action, "step_5")
             
-            time.sleep(5)
+            wait_seconds(5)
             if interrupted(): return
             print_camera_data()
+            interrupted()
             if interrupted(): return
             
             continue_action = perform_stop_goto()
             if interrupted(): return
             verify_action(continue_action, "step_6")
-            time.sleep(5)
+            wait_seconds(5)
             if interrupted(): return
             
             log.notice("Starting Calibration")
             wait_before = program.get('calibration', {}).get('wait_before', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_before} seconds")
-            time.sleep(wait_before)
+            wait_seconds(wait_before)
             if interrupted(): return
             continue_action = perform_calibration()
             if interrupted(): return
@@ -427,7 +475,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             wait_after = program.get('calibration', {}).get('wait_after', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            wait_seconds(wait_after)
             if interrupted(): return
 
         # Goto Solar System
@@ -440,7 +488,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             wait_after = program.get('goto_solar', {}).get('wait_after', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            wait_seconds(wait_after)
             if interrupted(): return
 
         # Goto Manual
@@ -463,7 +511,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             wait_after = program.get('goto_manual', {}).get('wait_after', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            wait_seconds(wait_after)
             if interrupted(): return
 
         # Astro Photo
@@ -490,29 +538,32 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
                 if interrupted(): return
                 verify_action(continue_action, "step_10")
 
-            time.sleep(5)
+            wait_seconds(5)
             if interrupted(): return
             print_camera_data()
+            interrupted()
             if interrupted(): return
             
             wait_after = program.get('setup_camera', {}).get('wait_after', 0)
             if interrupted(): return
             log.warning(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            wait_seconds(wait_after)
             if interrupted(): return
             
-            time.sleep(2)
+            wait_seconds(2)
             if interrupted(): return
             continue_action = perform_takeAstroPhoto()
             if interrupted(): return
             verify_action(continue_action, "step_11")
             
-            time.sleep(2)
+            wait_seconds(2)
             if interrupted(): return
             try:
                 continue_action = perform_waitEndAstroPhoto()
                 if interrupted(): return
                 verify_action(continue_action, "step_12")
+            except SessionCancelled:
+                raise
             except Exception as e:
                 continue_action = try_attemps(perform_waitRetryEndAstroPhoto, "Astro photo session completed", 5, interrupted=interrupted)
                 if interrupted(): return
@@ -523,6 +574,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
             if take_photo:
                 # need Go Live again in this case
                 continue_action = perform_GoLive()
+                interrupted()
                 verify_action(continue_action, "step_1a")
                 _reconnect_ui_preview(ui_instance)
 
@@ -536,6 +588,7 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
                 # session for tele.
                 log.notice("Entering Astro/DSO shooting mode (again, for wide)")
                 continue_action = perform_enter_astro_mode()
+                interrupted()
                 verify_action(continue_action, "step_1a")
                 _reconnect_ui_preview(ui_instance)
 
@@ -553,34 +606,41 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
                 if interrupted(): return
                 verify_action(continue_action, "step_13")
             
-            time.sleep(5)
+            wait_seconds(5)
             if interrupted(): return
             print_wide_camera_data()
+            interrupted()
             if interrupted(): return
 
             wait_after = int(program.get('setup_wide_camera', {}).get('wait_after', 0))
             if interrupted(): return
             log.warning(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            wait_seconds(wait_after)
             if interrupted(): return
             
-            time.sleep(2)
+            wait_seconds(2)
             if interrupted(): return
             continue_action = perform_takeAstroWidePhoto()
             if interrupted(): return
             verify_action(continue_action, "step_14")
             
-            time.sleep(2)
+            wait_seconds(2)
             if interrupted(): return
             try:
                 continue_action = perform_waitEndAstroWidePhoto()
                 if interrupted(): return
                 verify_action(continue_action, "step_15")
+            except SessionCancelled:
+                raise
             except Exception as e:
-                continue_action = try_attemps(perform_waitRetryEndAstroWidePhoto, "Wide Astro photo session completed", 5, interrupted=interrupted)
+                continue_action = try_attemps(perform_waitRetryEndAstroWidePhoto, "Wide astro photo session completed", 5, interrupted=interrupted)
                 if interrupted(): return
                 verify_action(continue_action, "step_15")
 
+    except SessionCancelled:
+        log.notice("Session stopped by user")
+        _stop_captures_best_effort()
+        raise
     except Exception as e:
         line_number = e.__traceback__.tb_lineno if e.__traceback__ else "unknown"
         log.error(f"Error during session : {e} Line: {line_number}")

@@ -9,8 +9,19 @@ from geopy.geocoders import Photon
 from timezonefinder import TimezoneFinder
 from geopy.exc import GeocoderInsufficientPrivileges
 from astro_dwarf_scheduler import BASE_DIR
-from ui.theme import apply_theme, load_appearance, palette, save_appearance
-from ui.widgets import card, section_header, hint_label
+from ui.theme import (
+    apply_theme,
+    available_font_families,
+    DEFAULT_FONT_FAMILY,
+    DEFAULT_FONT_SIZES,
+    FONT_SIZE_RANGES,
+    load_appearance,
+    load_font_settings,
+    palette,
+    save_appearance,
+    save_font_settings,
+)
+from ui.widgets import card, section_header, hint_label, SearchableCombobox
 
 # Import for exposure and gain dropdown values
 from dwarf_python_api.lib.data_utils import allowed_exposures, allowed_gains, allowed_exposuresD3, allowed_gainsD3
@@ -113,6 +124,37 @@ def get_lat_long_and_timezone(address, agent = 1):
         else:
             messagebox.showinfo("Error", "Can't found your location data!")
             return None, None, None
+
+def search_place_suggestions(query, agent=1):
+    """Return [(address, latitude, longitude), ...] for the address search list."""
+    text = (query or "").strip()
+    if len(text) < 2:
+        return []
+    try:
+        if agent == 1:
+            geolocator = Nominatim(user_agent="geoapiAstroSession")
+        else:
+            geolocator = Photon(user_agent="geoapiAstroSession")
+        results = geolocator.geocode(text, exactly_one=False, limit=8) or []
+        places = []
+        seen = set()
+        for location in results:
+            address = getattr(location, "address", None) or str(location)
+            latitude = getattr(location, "latitude", None)
+            longitude = getattr(location, "longitude", None)
+            if not address or latitude is None or longitude is None or address in seen:
+                continue
+            seen.add(address)
+            places.append((address, latitude, longitude))
+        return places
+    except GeocoderInsufficientPrivileges:
+        if agent == 1:
+            return search_place_suggestions(query, agent=2)
+        return []
+    except Exception:
+        if agent == 1:
+            return search_place_suggestions(query, agent=2)
+        return []
 
 def find_location(settings_vars):
     try:
@@ -313,6 +355,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
     rows = {}
     card_order = [
         ("appearance", "Appearance"),
+        ("fonts", "Fonts"),
         ("location", "Location"),
         ("device", "Device / Bluetooth"),
         ("stellarium", "Stellarium"),
@@ -328,6 +371,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         "imaging": (1, 0, 2),
         "appearance": (2, 0, 1),
         "stellarium": (2, 1, 1),
+        "fonts": (3, 0, 2),
     }
     for key, title in card_order:
         outer, inner = card(panels, padding=10)
@@ -353,6 +397,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         save_appearance(selected)
         root = tab_settings.winfo_toplevel()
         apply_theme(root, selected)
+        show_saved_message()
 
     theme_row = ttk.Frame(inners["appearance"], style="Card.TFrame")
     theme_row.grid(row=rows["appearance"], column=0, columnspan=2, sticky="w")
@@ -366,6 +411,124 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
     ).pack(side="left")
     hint_label(inners["appearance"], "Applies immediately and is remembered for next launch.").grid(
         row=rows["appearance"], column=0, columnspan=2, sticky="w", pady=(6, 0)
+    )
+
+    font_settings = load_font_settings()
+    font_family_var = tk.StringVar(value=font_settings["family"])
+    font_heading_var = tk.StringVar(value=str(font_settings["heading"]))
+    font_body_var = tk.StringVar(value=str(font_settings["body"]))
+    font_hint_var = tk.StringVar(value=str(font_settings["hint"]))
+    font_job = {"id": None}
+
+    def cancel_font_job():
+        job = font_job["id"]
+        if job is None:
+            return
+        try:
+            tab_settings.after_cancel(job)
+        except tk.TclError:
+            pass
+        font_job["id"] = None
+
+    def apply_font_choices():
+        cancel_font_job()
+        current = load_font_settings()
+        typed = (font_family_var.get() or "").strip() or DEFAULT_FONT_FAMILY
+        known = {name.lower(): name for name in families}
+        if typed.lower() in known:
+            family = known[typed.lower()]
+        elif typed.lower() == current["family"].lower():
+            family = current["family"]
+        else:
+            return
+
+        def size_value(var, role):
+            lo, hi = FONT_SIZE_RANGES[role]
+            try:
+                return max(lo, min(hi, int(str(var.get()).strip())))
+            except (TypeError, ValueError, tk.TclError):
+                return current[role]
+
+        heading = size_value(font_heading_var, "heading")
+        body = size_value(font_body_var, "body")
+        hint = size_value(font_hint_var, "hint")
+        if (
+            family == current["family"]
+            and heading == current["heading"]
+            and body == current["body"]
+            and hint == current["hint"]
+        ):
+            return
+        save_font_settings(family, heading=heading, body=body, hint=hint)
+        font_family_var.set(family)
+        font_heading_var.set(str(heading))
+        font_body_var.set(str(body))
+        font_hint_var.set(str(hint))
+        root = tab_settings.winfo_toplevel()
+        apply_theme(root, load_appearance())
+        show_saved_message()
+
+    def schedule_font_apply(*_args):
+        cancel_font_job()
+        font_job["id"] = tab_settings.after(250, apply_font_choices)
+
+    def reset_fonts():
+        font_family_var.set(DEFAULT_FONT_FAMILY)
+        font_heading_var.set(str(DEFAULT_FONT_SIZES["heading"]))
+        font_body_var.set(str(DEFAULT_FONT_SIZES["body"]))
+        font_hint_var.set(str(DEFAULT_FONT_SIZES["hint"]))
+        apply_font_choices()
+
+    families = available_font_families(tab_settings)
+    if font_settings["family"] and font_settings["family"] not in families:
+        families = [font_settings["family"]] + families
+
+    fonts_inner = inners["fonts"]
+    fonts_inner.grid_columnconfigure(1, weight=1)
+    fonts_inner.grid_columnconfigure(2, weight=0)
+
+    ttk.Label(fonts_inner, text="Font family", width=12, anchor="e", style="Card.TLabel").grid(
+        row=1, column=0, sticky="e", padx=(0, 8), pady=3
+    )
+    font_combo = SearchableCombobox(
+        fonts_inner,
+        values=families,
+        textvariable=font_family_var,
+        on_select=lambda _value: schedule_font_apply(),
+        empty_message="No matching fonts",
+        height=12,
+    )
+    font_combo.grid(row=1, column=1, sticky="ew", pady=3, padx=(0, 16))
+    font_combo._entry.bind("<FocusOut>", lambda _event: schedule_font_apply(), add="+")
+    font_combo._entry.bind("<Return>", lambda _event: schedule_font_apply(), add="+")
+
+    def _size_spinbox(parent, label, variable, role):
+        lo, hi = FONT_SIZE_RANGES[role]
+        wrap = ttk.Frame(parent, style="Card.TFrame")
+        ttk.Label(wrap, text=label, style="Card.TLabel").pack(side="left", padx=(0, 4))
+        spin = ttk.Spinbox(
+            wrap,
+            from_=lo,
+            to=hi,
+            increment=1,
+            width=4,
+            textvariable=variable,
+            command=schedule_font_apply,
+        )
+        spin.pack(side="left")
+        spin.bind("<FocusOut>", schedule_font_apply)
+        spin.bind("<Return>", schedule_font_apply)
+        return wrap
+
+    sizes_row = ttk.Frame(fonts_inner, style="Card.TFrame")
+    sizes_row.grid(row=1, column=2, sticky="e", pady=3)
+    _size_spinbox(sizes_row, "Body", font_body_var, "body").pack(side="left", padx=(0, 10))
+    _size_spinbox(sizes_row, "Heading", font_heading_var, "heading").pack(side="left", padx=(0, 10))
+    _size_spinbox(sizes_row, "Small", font_hint_var, "hint").pack(side="left", padx=(0, 12))
+    ttk.Button(sizes_row, text="Reset fonts", command=reset_fonts, style="Compact.TButton").pack(side="left")
+
+    hint_label(fonts_inner, "Type to search installed fonts. Changes apply immediately.").grid(
+        row=2, column=1, columnspan=2, sticky="w"
     )
 
     def find_location_in_background():
@@ -383,10 +546,8 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         inners["location"],
         text="Find location from address",
         command=find_location_in_background,
-        style="Accent.TButton",
+        style="Compact.TButton",
     )
-    location_button.grid(row=rows["location"], column=0, columnspan=2, pady=(0, 10), sticky="ew")
-    rows["location"] += 1
 
     ircut_combo = None
     ircut_var = None
@@ -422,11 +583,61 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             row=grid_row, column=0, sticky="e", padx=(0, 8), pady=3
         )
 
-        if key == "timezone":
-            tz_list = pytz.all_timezones
-            var = tk.StringVar(value=config.get(key, ''))
+        if key == "address":
+            current_address = str(config.get(key, "") or "")
+            var = tk.StringVar(value=current_address)
+            place_lookup = {}
+
+            def fetch_addresses(query):
+                places = search_place_suggestions(query)
+                place_lookup.clear()
+                labels = []
+                for address, lat, lon in places:
+                    place_lookup[address] = (lat, lon)
+                    labels.append(address)
+                return labels
+
+            def apply_address_choice(address):
+                coords = place_lookup.get(address)
+                if not coords:
+                    return
+                latitude, longitude = coords
+                settings_vars["latitude"].set(latitude)
+                settings_vars["longitude"].set(longitude)
+                timezone_str = TimezoneFinder().timezone_at(lat=float(latitude), lng=float(longitude))
+                if timezone_str:
+                    settings_vars["timezone"].set(timezone_str)
+                    tz_combo = settings_vars.get("timezone_dropdown")
+                    if tz_combo is not None:
+                        tz_values = list(tz_combo.cget("values") or ())
+                        if timezone_str not in tz_values:
+                            tz_combo.configure(values=[timezone_str] + tz_values)
+
+            combo = SearchableCombobox(
+                parent,
+                textvariable=var,
+                fetch_values=fetch_addresses,
+                on_select=apply_address_choice,
+                min_query_length=2,
+                empty_message="No matching places",
+            )
+            settings_vars[key] = var
+            settings_vars["address_dropdown"] = combo
+            combo.grid(row=grid_row, column=1, sticky="ew", pady=3)
+            hint_label(parent, "Type to search, then pick a place from the list.").grid(
+                row=grid_row + 1, column=1, sticky="w"
+            )
+            location_button.grid(row=grid_row + 2, column=1, pady=3, sticky="ew")
+            rows[group] += 2
+        elif key == "timezone":
+            current_tz = str(config.get(key, "") or "")
+            tz_list = list(pytz.common_timezones)
+            if current_tz and current_tz not in tz_list:
+                tz_list = [current_tz] + tz_list
+            var = tk.StringVar(value=current_tz)
             combo = ttk.Combobox(parent, textvariable=var, values=tz_list, state="readonly")
             settings_vars[key] = var
+            settings_vars["timezone_dropdown"] = combo
             combo.grid(row=grid_row, column=1, sticky="ew", pady=3)
         elif key == "ircut":
             device_type_val = config.get('device_type', '')
@@ -590,22 +801,77 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         if 'binning_dropdown' in settings_vars:
             settings_vars['binning_dropdown'].config(state="disabled")
 
-    hint_label(scrollable_frame, "Updates are saved automatically.").pack(pady=16, padx=12, anchor="w")
+    saved_status = hint_label(inners["device"], "")
+    saved_status.grid(row=rows["device"], column=0, columnspan=2, sticky="se", pady=(8, 0))
+    inners["device"].grid_rowconfigure(rows["device"], weight=1)
+    persist_job = {"id": None}
+    status_job = {"id": None}
+    listening = {"on": False}
 
-    def on_tab_focus_out(event):
-        save_settings(settings_vars, show_message=False, update_create_session_callback=update_create_session_callback)
+    def cancel_job(holder):
+        job = holder["id"]
+        if job is None:
+            return
+        try:
+            tab_settings.after_cancel(job)
+        except tk.TclError:
+            pass
+        holder["id"] = None
+
+    def show_saved_message():
+        try:
+            if not saved_status.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        saved_status.configure(text="Settings Saved")
+        cancel_job(status_job)
+
+        def hide_saved_message():
+            status_job["id"] = None
+            try:
+                if saved_status.winfo_exists():
+                    saved_status.configure(text="")
+            except tk.TclError:
+                pass
+
+        status_job["id"] = tab_settings.after(2500, hide_saved_message)
+
+    def persist_settings(show_status=False):
+        cancel_job(persist_job)
+        changed = save_settings(
+            settings_vars,
+            show_message=False,
+            update_create_session_callback=update_create_session_callback,
+        )
+        if show_status and changed:
+            show_saved_message()
+        return changed
+
+    def schedule_persist(*_args):
+        if not listening["on"]:
+            return
+        cancel_job(persist_job)
+        persist_job["id"] = tab_settings.after(350, lambda: persist_settings(show_status=True))
+
+    for key, var in list(settings_vars.items()):
+        if key.startswith("_") or key.endswith("_dropdown"):
+            continue
+        if hasattr(var, "trace_add"):
+            var.trace_add("write", schedule_persist)
+    listening["on"] = True
+
+    def on_tab_focus_out(_event):
+        persist_settings(show_status=True)
 
     def on_app_close():
-        save_settings(settings_vars, show_message=False, update_create_session_callback=update_create_session_callback)
-        if hasattr(tab_settings, 'winfo_toplevel'):
+        persist_settings(show_status=False)
+        if hasattr(tab_settings, "winfo_toplevel"):
             tab_settings.winfo_toplevel().destroy()
 
-    # Bind tab focus out to auto-save
-    tab_settings.bind('<FocusOut>', on_tab_focus_out)
-
-    # Bind app close (window close) to auto-save
+    tab_settings.bind("<FocusOut>", on_tab_focus_out)
     root = tab_settings.winfo_toplevel()
-    if hasattr(root, 'protocol'):
+    if hasattr(root, "protocol"):
         try:
             root.protocol("WM_DELETE_WINDOW", on_app_close)
         except Exception:
@@ -676,6 +942,14 @@ def save_settings(settings_vars, show_message=True, update_create_session_callba
         if str(old_device_type) != new_device_type:
             settings_changed = True
         
+    any_changed = False
+    for key, value in config_data.items():
+        if str(current_config.get(key, "")) != str(value):
+            any_changed = True
+            break
+    if not any_changed:
+        return False
+
     save_config(config_data)
     
     # Trigger Create Session update if relevant settings changed
@@ -684,6 +958,7 @@ def save_settings(settings_vars, show_message=True, update_create_session_callba
         
     if show_message:
         messagebox.showinfo("Settings", "Configuration saved successfully!")
+    return True
 
 # Utility function to update IR Cut dropdown and value map on the page
 def update_ircut_dropdown(camera_type_display_val, ircut_combo, ircut_var, settings_vars):
