@@ -5,6 +5,9 @@ Setup script for building Astro Dwarf Scheduler Console application on macOS usi
 from setuptools import setup
 import sys
 import os
+from app_version import get_app_version
+
+VERSION = get_app_version()
 
 # py2app setup options
 OPTIONS = {
@@ -16,8 +19,8 @@ OPTIONS = {
     'plist': {
         'CFBundleName': 'AstroDwarfSchedulerConsole',
         'CFBundleDisplayName': 'Astro Dwarf Scheduler Console',
-        'CFBundleVersion': '1.7.5',
-        'CFBundleShortVersionString': '1.7.5',
+        'CFBundleVersion': VERSION,
+        'CFBundleShortVersionString': VERSION,
         'CFBundleIdentifier': 'com.astrodwarf.scheduler.console',
         'LSMinimumSystemVersion': '10.9',
     }
@@ -36,7 +39,7 @@ if os.path.exists('Astro_Sessions'):
 
 setup(
     name="AstroDwarfSchedulerConsole",
-    version="1.7.5",
+    version=VERSION,
     description="Automatic Astro Session for the Dwarf - Console Version",
     author="Astro Dwarf Team",
     app=['astro_dwarf_scheduler.py'],

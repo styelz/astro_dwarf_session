@@ -5,6 +5,9 @@ Setup script for building Astro Dwarf Scheduler GUI application on macOS using p
 from setuptools import setup
 import sys
 import os
+from app_version import get_app_version
+
+VERSION = get_app_version()
 
 # py2app setup options
 OPTIONS = {
@@ -16,8 +19,8 @@ OPTIONS = {
     'plist': {
         'CFBundleName': 'AstroDwarfScheduler',
         'CFBundleDisplayName': 'Astro Dwarf Scheduler',
-        'CFBundleVersion': '1.7.5',
-        'CFBundleShortVersionString': '1.7.5',
+        'CFBundleVersion': VERSION,
+        'CFBundleShortVersionString': VERSION,
         'CFBundleIdentifier': 'com.astrodwarf.scheduler',
         'LSMinimumSystemVersion': '10.9',
     }
@@ -36,7 +39,7 @@ if os.path.exists('Astro_Sessions'):
 
 setup(
     name="AstroDwarfScheduler",
-    version="1.7.5",
+    version=VERSION,
     description="Dwarf Astro Scheduler GUI Application",
     author="Astro Dwarf Team",
     app=['astro_dwarf_session_UI.py'],

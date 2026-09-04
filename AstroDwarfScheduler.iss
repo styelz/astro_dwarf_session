@@ -1,5 +1,7 @@
 #define MyAppName "Astro Dwarf Session"
-#define MyAppVersion "1.7.5"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.7.6"
+#endif
 #define MyAppPublisher "ASD"
 #define MyAppURL "https://github.com/styelz/astro_dwarf_session"
 #define MyAppExeName "astro_dwarf_session_UI.exe"
