@@ -390,10 +390,18 @@ def check_and_execute_commands(ui_instance=None, stop_event=None, skip_time_chec
                     if ui_instance and hasattr(ui_instance, 'session_running'):
                         if not ui_instance.session_running:
                             ui_instance.session_running = True  # Mark session as running
+                            if hasattr(ui_instance, "session_stop_event"):
+                                ui_instance.session_stop_event.clear()
                             if hasattr(ui_instance, '_stop_video_stream'):
                                 ui_instance._stop_video_stream = False
                             if hasattr(ui_instance, 'start_video_preview'):
-                                ui_instance.start_video_preview()
+                                ui_instance.start_video_preview(ensure_live=False)
+                            sync_stop = getattr(ui_instance, "_sync_stop_session_button", None)
+                            if callable(sync_stop):
+                                try:
+                                    ui_instance.after(0, sync_stop)
+                                except Exception:
+                                    pass
                                                     
                     # Move to Current directory
                     current_path = os.path.join(LIST_ASTRO_DIR_DEFAULT["SESSIONS_DIR"], "Current", filename)
@@ -421,7 +429,7 @@ def check_and_execute_commands(ui_instance=None, stop_event=None, skip_time_chec
                         if data_config["dwarf_id"]:
                            dwarf_id = data_config['dwarf_id']
 
-                        start_dwarf_session(command_data['command'], stop_event=stop_event)
+                        start_dwarf_session(command_data['command'], stop_event=stop_event, ui_instance=ui_instance)
 
                         # Session completed successfully
                         id_command['process'] = 'done'
@@ -518,8 +526,22 @@ def check_and_execute_commands(ui_instance=None, stop_event=None, skip_time_chec
                     if ui_instance and hasattr(ui_instance, 'session_running'):
                         if ui_instance.session_running:
                             ui_instance.session_running = False  # Mark session as not running
+                            if hasattr(ui_instance, "session_stop_event"):
+                                ui_instance.session_stop_event.clear()
                             if hasattr(ui_instance, '_stop_video_stream'):
                                 ui_instance._stop_video_stream = True
+                            set_status = getattr(ui_instance, "_set_video_status", None)
+                            if callable(set_status):
+                                try:
+                                    ui_instance.after(0, lambda: set_status("Video stream is off"))
+                                except Exception:
+                                    pass
+                            sync_stop = getattr(ui_instance, "_sync_stop_session_button", None)
+                            if callable(sync_stop):
+                                try:
+                                    ui_instance.after(0, sync_stop)
+                                except Exception:
+                                    pass
                                 
                     # Only process one session at a time                    
                     break

@@ -2,51 +2,61 @@ import os
 import json
 import shutil
 import tkinter as tk
+from tkinter import ttk
 from datetime import datetime
 
 from astro_dwarf_scheduler import LIST_ASTRO_DIR_DEFAULT
+from ui.theme import status_color
+from ui.widgets import card, section_header, hint_label
 
 def overview_session_tab(parent_frame, refresh_setter=None):
     """Initializes the session overview tab. Optionally registers a refresh function for external use."""
-    # Use grid layout for resizable content and sticky buttons
-    parent_frame.grid_rowconfigure(1, weight=0)  # label
-    parent_frame.grid_rowconfigure(2, weight=0)  # listbox
-    parent_frame.grid_rowconfigure(3, weight=0)  # labels/buttons row
-    parent_frame.grid_rowconfigure(4, weight=1)  # text area (expandable)
-    parent_frame.grid_columnconfigure(0, weight=1)
-    parent_frame.grid_columnconfigure(1, weight=1)
-    parent_frame.grid_columnconfigure(2, weight=1)
+    parent_frame.grid_rowconfigure(0, weight=1)
+    parent_frame.grid_columnconfigure(0, weight=1, minsize=280)
+    parent_frame.grid_columnconfigure(1, weight=2)
 
-    # JSON session management section
-    json_label = tk.Label(parent_frame, text="Available Sessions", font=("Arial", 12))
-    json_label.grid(row=1, column=0, columnspan=3, sticky="new", pady=(8, 0))
-    # Listbox to show available JSON files
-    json_listbox = tk.Listbox(parent_frame, height=13, selectmode=tk.EXTENDED)
-    json_listbox.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=10, pady=5)
+    list_card, list_inner = card(parent_frame)
+    list_card.grid(row=0, column=0, sticky="nsew", padx=(12, 8), pady=12)
+    list_inner.grid_rowconfigure(1, weight=1)
+    list_inner.grid_columnconfigure(0, weight=1)
 
-    # Auto-save info label at the bottom (light grey)
-    autosave_label1 = tk.Label(parent_frame, text="Double click session names to toggle.", fg="#555555", font=("Arial", 11, "italic"))
-    autosave_label1.grid(row=3, column=0, pady=(5, 0), padx=(10, 2), sticky='e')
+    section_header(list_inner, "Available Sessions").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
-    select_button = tk.Button(parent_frame, text="Toggle Selected", command=lambda: select_session(json_listbox, json_text, select_button), state=tk.NORMAL)
-    select_button.grid(row=3, column=1, pady=(5, 0), padx=2, sticky='ew')
+    json_listbox = tk.Listbox(list_inner, height=8, selectmode=tk.EXTENDED, relief="flat", highlightthickness=0)
+    json_listbox.grid(row=1, column=0, columnspan=3, sticky="nsew")
+    list_scroll = ttk.Scrollbar(list_inner, orient="vertical", command=json_listbox.yview)
+    list_scroll.grid(row=1, column=3, sticky="ns")
+    json_listbox.configure(yscrollcommand=list_scroll.set)
 
-    autosave_label2 = tk.Label(parent_frame, text="Hold shift to select multiple sessions.", fg="#555555", font=("Arial", 11, "italic"))
-    autosave_label2.grid(row=3, column=2, pady=(5, 0), padx=(2, 10), sticky='w')
+    toolbar = ttk.Frame(list_inner, style="Card.TFrame")
+    toolbar.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+    toolbar.grid_columnconfigure(0, weight=1)
+    toolbar.grid_columnconfigure(2, weight=1)
+    hint_label(toolbar, "Double click session names to toggle.").grid(row=0, column=0, sticky="e", padx=(0, 8))
+    select_button = ttk.Button(
+        toolbar, text="Toggle Selected", command=lambda: select_session(json_listbox, json_text, select_button)
+    )
+    select_button.grid(row=0, column=1, padx=8)
+    hint_label(toolbar, "Hold shift to select multiple sessions.").grid(row=0, column=2, sticky="w", padx=(8, 0))
 
-    # Text area to display JSON file content (resizable)
-    json_text = tk.Text(parent_frame, state=tk.DISABLED)
-    json_text.grid(row=4, column=0, columnspan=3, sticky="nsew", padx=10, pady=10)
+    detail_card, detail_inner = card(parent_frame)
+    detail_card.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=12)
+    detail_inner.grid_rowconfigure(1, weight=1)
+    detail_inner.grid_columnconfigure(0, weight=1)
+    section_header(detail_inner, "Session details").grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+    json_text = tk.Text(detail_inner, state=tk.DISABLED, relief="flat", highlightthickness=0)
+    json_text.grid(row=1, column=0, sticky="nsew")
+    detail_scroll = ttk.Scrollbar(detail_inner, orient="vertical", command=json_text.yview)
+    detail_scroll.grid(row=1, column=1, sticky="ns")
+    json_text.configure(yscrollcommand=detail_scroll.set)
+
     json_listbox.bind('<<ListboxSelect>>', lambda event: on_json_select(event, json_listbox, json_text))
-
-    # Bind double-click to select_session
     json_listbox.bind('<Double-Button-1>', lambda event: select_session(json_listbox, json_text, refresh_json_list))
 
-    # Populate JSON list
     def refresh_json_list():
         populate_json_list(json_listbox)
     refresh_json_list()
-    # Register the refresh function for external use
     if refresh_setter is not None:
         refresh_setter(refresh_json_list)
     return refresh_json_list
@@ -59,12 +69,12 @@ def populate_json_list(json_listbox):
     from astro_dwarf_scheduler import LIST_ASTRO_DIR
     sessions_dir = LIST_ASTRO_DIR_DEFAULT["SESSIONS_DIR"]
     subdirs = {
-        'main': {'path': sessions_dir, 'label': '', 'color': 'black', 'font': None},
-        'ToDo': {'path': LIST_ASTRO_DIR["TODO_DIR"], 'label': ' [ToDo]', 'color': 'blue', 'font': None},
-        'Current': {'path': os.path.join(sessions_dir, 'Current'), 'label': ' [Current]', 'color': 'purple', 'font': None},
-        'Done': {'path': os.path.join(sessions_dir, 'Done'), 'label': ' [Done]', 'color': 'green', 'font': None},
-        'Error': {'path': os.path.join(sessions_dir, 'Error'), 'label': ' [Error]', 'color': 'red', 'font': None},
-        'Results': {'path': os.path.join(sessions_dir, 'Results'), 'label': ' [Results]', 'color': 'gray', 'font': None},
+        'main': {'path': sessions_dir, 'label': '', 'color': status_color('main'), 'font': None},
+        'ToDo': {'path': LIST_ASTRO_DIR["TODO_DIR"], 'label': ' [ToDo]', 'color': status_color('ToDo'), 'font': None},
+        'Current': {'path': os.path.join(sessions_dir, 'Current'), 'label': ' [Current]', 'color': status_color('Current'), 'font': None},
+        'Done': {'path': os.path.join(sessions_dir, 'Done'), 'label': ' [Done]', 'color': status_color('Done'), 'font': None},
+        'Error': {'path': os.path.join(sessions_dir, 'Error'), 'label': ' [Error]', 'color': status_color('Error'), 'font': None},
+        'Results': {'path': os.path.join(sessions_dir, 'Results'), 'label': ' [Results]', 'color': status_color('Results'), 'font': None},
     }
     all_files = []
 

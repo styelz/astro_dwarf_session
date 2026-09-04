@@ -135,10 +135,27 @@ def try_attemps (function, function_succeed_message, max_attempts = 3, interrupt
     return continue_action
 
 
-def start_dwarf_session(program, stop_event=None):
+def _reconnect_ui_preview(ui_instance):
+    if ui_instance is None:
+        return
+    reconnect = getattr(ui_instance, "reconnect_video_preview", None)
+    if callable(reconnect):
+        try:
+            reconnect()
+        except Exception as e:
+            log.debug(f"UI preview reconnect failed: {e}")
+
+
+def start_dwarf_session(program, stop_event=None, ui_instance=None):
     try:
         def interrupted():
-            return stop_event is not None and stop_event.is_set()
+            if stop_event is not None and stop_event.is_set():
+                return True
+            if ui_instance is not None:
+                session_stop = getattr(ui_instance, "session_stop_event", None)
+                if session_stop is not None and session_stop.is_set():
+                    return True
+            return False
         
         data_config = config_py.get_config_data()
         dwarf_id = "2"  # Default Dwarf ID
@@ -263,6 +280,7 @@ def start_dwarf_session(program, stop_event=None):
         # Go Live
         continue_action = perform_GoLive()
         verify_action(continue_action, "step_1a")
+        _reconnect_ui_preview(ui_instance)
 
         # V3: switch the device into the right shooting mode + technique
         # (SWITCH_SHOOTING_MODE/ENTER_CAMERA/SWITCH_SHOOTING_TECH,
@@ -290,6 +308,7 @@ def start_dwarf_session(program, stop_event=None):
             log.notice("Entering Astro/DSO shooting mode")
             continue_action = perform_enter_astro_mode()
         verify_action(continue_action, "step_1a")
+        _reconnect_ui_preview(ui_instance)
 
         # Auto Focus
         if auto_focus:
@@ -505,6 +524,7 @@ def start_dwarf_session(program, stop_event=None):
                 # need Go Live again in this case
                 continue_action = perform_GoLive()
                 verify_action(continue_action, "step_1a")
+                _reconnect_ui_preview(ui_instance)
 
                 # V3: GO LIVE alone does not keep the device in Astro/DSO
                 # mode - field-confirmed (Aug 2026): after a tele session,
@@ -517,6 +537,7 @@ def start_dwarf_session(program, stop_event=None):
                 log.notice("Entering Astro/DSO shooting mode (again, for wide)")
                 continue_action = perform_enter_astro_mode()
                 verify_action(continue_action, "step_1a")
+                _reconnect_ui_preview(ui_instance)
 
             log.notice(f"Processing Astro Wide Photo Session : {wide_count_val} images")
             if wide_exp_val:

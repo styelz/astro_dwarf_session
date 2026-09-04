@@ -19,6 +19,8 @@ import threading
 from astro_dwarf_scheduler import BASE_DIR
 import configparser
 import sys
+from ui.theme import style_date_entry, apply_theme, load_appearance, palette
+from ui.widgets import card, section_header, hint_label, form_row
 
 def list_available_names(instance):
     return [entry["name"] for entry in instance.values]
@@ -37,7 +39,7 @@ solar_system_objects = [
     "Sun"
 ]
 
-def create_form_fields(scrollable_frame, settings_vars, config_vars):
+def create_form_fields(scrollable_frame, settings_vars, config_vars, start_row=0):
     # Use grid layout for neat alignment and resizable behavior
     for i in range(0, 20):
         scrollable_frame.grid_rowconfigure(i, weight=0)
@@ -45,19 +47,16 @@ def create_form_fields(scrollable_frame, settings_vars, config_vars):
 
     # Helper to add a label and widget to the grid
     def add_row(row, label_text, widget, label_width=20, sticky_label='e', sticky_widget='we', pady=2):
-        label = tk.Label(scrollable_frame, text=label_text, width=label_width, anchor='w')
-        label.grid(row=row, column=0, sticky=sticky_label, padx=(5,2), pady=pady)
-        widget.grid(row=row, column=1, sticky=sticky_widget, padx=(2,10), pady=pady)
-        return label, widget
+        return form_row(scrollable_frame, row, label_text, widget, label_width=label_width)
 
-    row = 0
-    # Description field at the top
-    description_var = tk.StringVar()
-    if config_vars.get("description") is not None and config_vars["description"].get():
-        description_var.set(config_vars["description"].get())
-    settings_vars["description"] = description_var
-    add_row(row, "Description", tk.Entry(scrollable_frame, textvariable=description_var))
-    row += 1
+    row = start_row
+    if "description" not in settings_vars:
+        description_var = tk.StringVar()
+        if config_vars.get("description") is not None and config_vars["description"].get():
+            description_var.set(config_vars["description"].get())
+        settings_vars["description"] = description_var
+        add_row(row, "Description", ttk.Entry(scrollable_frame, textvariable=description_var))
+        row += 1
 
     # Exposure
     exposure_var = tk.StringVar()
@@ -143,14 +142,14 @@ def create_mutually_exclusive_checkboxes(parent, var1, var2, var3, label1, label
             var2.set(True)  # Uncheck the other checkbox
 
     # Create a frame to contain the checkboxes
-    check1 = tk.Checkbutton(parent, text=label1, variable=var1, command=on_check1)
-    check1.pack(side=tk.LEFT, padx=(0, 5))  # Pack side by side
+    check1 = ttk.Checkbutton(parent, text=label1, variable=var1, command=on_check1)
+    check1.pack(side=tk.LEFT, padx=(0, 8))
 
-    check2 = tk.Checkbutton(parent, text=label2, variable=var2, command=on_check2)
-    check2.pack(side=tk.LEFT)  # Pack side by side
+    check2 = ttk.Checkbutton(parent, text=label2, variable=var2, command=on_check2)
+    check2.pack(side=tk.LEFT, padx=(0, 8))
 
-    check3 = tk.Checkbutton(parent, text=label3, variable=var3, command=on_check3)
-    check3.pack(side=tk.LEFT)  # Pack side by side
+    check3 = ttk.Checkbutton(parent, text=label3, variable=var3, command=on_check3)
+    check3.pack(side=tk.LEFT)
 
 def update_exposure_gain_dropdowns_from_camera_type(camera_type_display, settings_vars):
     """Update exposure and gain dropdowns when camera type changes from settings tab"""
@@ -878,39 +877,34 @@ def generate_json_preview(settings_vars, config_vars):
 
 
 def show_preview_dialog(json_preview):
-    # Create a new window for the preview
     preview_window = tk.Toplevel()
     preview_window.title("Preview JSON Data")
-    
-    # Default value for confirmed attribute
+    preview_window.geometry("640x520")
+    apply_theme(preview_window, load_appearance())
     setattr(preview_window, "confirmed", False)
-    
-    # Create a text widget to display the preview
-    text_widget = tk.Text(preview_window, wrap='word', height=20, width=50)
-    text_widget.pack(expand=True, fill='both')
-    
-    # Insert the JSON preview data into the text widget
+
+    body, inner = card(preview_window)
+    body.pack(fill="both", expand=True, padx=12, pady=12)
+    inner.grid_rowconfigure(1, weight=1)
+    inner.grid_columnconfigure(0, weight=1)
+    section_header(inner, "Imported sessions").grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+    text_widget = tk.Text(inner, wrap="word", height=20, width=50, relief="flat")
+    text_widget.grid(row=1, column=0, sticky="nsew")
+    preview_scroll = ttk.Scrollbar(inner, orient="vertical", command=text_widget.yview)
+    preview_scroll.grid(row=1, column=1, sticky="ns")
+    text_widget.configure(yscrollcommand=preview_scroll.set)
+
     for json_data in json_preview:
         text_widget.insert(tk.END, f"{json_data}\n\n")
-    
-    # Make the text widget read-only
     text_widget.config(state=tk.DISABLED)
-    
-    # Create a frame for the buttons
-    button_frame = tk.Frame(preview_window)
-    button_frame.pack(pady=10)
 
-    # Add "Confirm" and "Cancel" buttons
-    confirm_button = tk.Button(button_frame, text="Confirm", command=lambda: on_confirm(preview_window))
-    confirm_button.pack(side=tk.LEFT, padx=5)
-    
-    cancel_button = tk.Button(button_frame, text="Cancel", command=lambda: on_cancel(preview_window))
-    cancel_button.pack(side=tk.LEFT, padx=5)
+    button_frame = ttk.Frame(inner, style="Card.TFrame")
+    button_frame.grid(row=2, column=0, columnspan=2, pady=(12, 0))
+    ttk.Button(button_frame, text="Confirm", style="Accent.TButton", command=lambda: on_confirm(preview_window)).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="Cancel", command=lambda: on_cancel(preview_window)).pack(side=tk.LEFT, padx=5)
 
-    # Run the window and wait for user action
     preview_window.wait_window()
-
-    # If the window was confirmed, return True, otherwise return False
     return getattr(preview_window, "confirmed", False)
 
 
@@ -935,185 +929,197 @@ def save_json_to_file(json_data):
     with open(filepath, 'w') as outfile:
         json.dump(json_data, outfile, indent=4)
 
-# Function to create the session tab
 def create_session_tab(tab_create_session, settings_vars, config_vars):
-    # --- Modern scrollable frame setup ---
     container = ttk.Frame(tab_create_session)
-    container.grid(row=0, column=0, sticky='nsew')
+    container.grid(row=0, column=0, sticky="nsew")
     tab_create_session.grid_rowconfigure(0, weight=1)
     tab_create_session.grid_columnconfigure(0, weight=1)
 
-    canvas = tk.Canvas(container, highlightthickness=0)
+    canvas = tk.Canvas(container, highlightthickness=0, bg=palette["bg"], bd=0)
     scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
     scrollable_frame = ttk.Frame(canvas)
 
-    def _on_frame_configure(event):
-        canvas.configure(scrollregion=canvas.bbox("all"))
-        canvas_width = event.width
-        canvas.itemconfig("frame", width=canvas_width)
+    def _sync_scrollbar():
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return
+        content_height = bbox[3] - bbox[1]
+        if content_height > canvas.winfo_height() + 1:
+            scrollbar.grid(row=0, column=1, sticky="ns")
+        else:
+            canvas.yview_moveto(0)
+            scrollbar.grid_remove()
 
-    scrollable_frame.bind(
-        "<Configure>", _on_frame_configure
-    )
+    def _on_frame_configure(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        _sync_scrollbar()
+
+    scrollable_frame.bind("<Configure>", _on_frame_configure)
     canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", tags="frame")
     canvas.configure(yscrollcommand=scrollbar.set)
 
     def _on_canvas_configure(event):
         canvas.itemconfig("frame", width=event.width)
+        _sync_scrollbar()
 
-    canvas.bind('<Configure>', _on_canvas_configure)
-
+    canvas.bind("<Configure>", _on_canvas_configure)
     canvas.grid(row=0, column=0, sticky="nsew")
     scrollbar.grid(row=0, column=1, sticky="ns")
     container.grid_rowconfigure(0, weight=1)
     container.grid_columnconfigure(0, weight=1)
-    # Make the scrollable_frame expand vertically
-    scrollable_frame.grid_rowconfigure(999, weight=1)
-
-    # Create form fields in the scrollable frame using grid
-    fields = [
-        ("Description", "description"),
-        ("Max Retries", "max_retries"),
-        ("Wait Before Action in s.", "wait_before"),
-        ("Wait After Action in s.", "wait_after"),
-        ("Target Type", "target_type"),
-        ("Solar System Object", "target_solar"),
-        ("Manual Target", "target"),
-        ("RA (dec or HH:mm:ss.s)", "ra_coord"),
-        ("Dec (dec or ±DD:mm:ss.s)", "dec_coord"),
-        ("Wait After Goto in s.", "wait_after_target"),
-        ("Imaging count (0 Not Do)", "count"),
-        ("Wait After Session in s.", "wait_after_camera"),
-        ("Date (YYYY-MM-DD)", "date")
-    ]
 
     current_datetime = datetime.datetime.now()
     var_goto_solar = tk.BooleanVar(value=False)
     var_goto_manual = tk.BooleanVar(value=True)
     var_no_goto = tk.BooleanVar(value=False)
+    settings_vars["goto_solar"] = var_goto_solar
+    settings_vars["goto_manual"] = var_goto_manual
+    settings_vars["no_goto"] = var_no_goto
 
-    entry = tk.Entry()
-    var = tk.StringVar()
+    def _var(key, default=""):
+        var = tk.StringVar()
+        if config_vars.get(key) is not None and config_vars[key].get():
+            var.set(config_vars[key].get())
+        elif default != "":
+            var.set(default)
+        settings_vars[key] = var
+        return var
 
-    grid_row = 0
-    for field, key in fields:
-        label = tk.Label(scrollable_frame, width=20, text=field, anchor='w')
-        if key == "date":
-            var = tk.StringVar()
-            entry = DateEntry(scrollable_frame, textvariable=var, date_pattern="yyyy-mm-dd")
-        elif key == "target_type":
-            entry = tk.Frame(scrollable_frame)
-            create_mutually_exclusive_checkboxes(entry, var_goto_solar, var_goto_manual, var_no_goto, "Solar System", "Manual", "None")
-            settings_vars["goto_solar"] = var_goto_solar
-            settings_vars["goto_manual"] = var_goto_manual
-            settings_vars["no_goto"] = var_no_goto
-        elif key != "target_solar":
-            var = tk.StringVar()
-            entry = tk.Entry(scrollable_frame, textvariable=var)
+    panels = ttk.Frame(scrollable_frame)
+    panels.pack(fill="x", padx=12, pady=12)
+    panels.grid_columnconfigure(0, weight=1, uniform="panel")
+    panels.grid_columnconfigure(1, weight=1, uniform="panel")
 
-        if key != "date" and key != "target_type" and key != "target_solar":
-            if config_vars.get(key) is not None and config_vars[key].get():
-                var.set(config_vars[key].get())
-        if key == "max_retries":
-            var.set("2")
-        if key == "wait_before":
-            var.set("10")
-        if key == "wait_after":
-            var.set("10")
-        if key == "wait_after_target":
-            var.set("30")
-        if key == "wait_after_camera":
-            var.set("20")
-        if key != "target_type" and key != "target_solar":
-            settings_vars[key] = var
+    def make_card(title, row, column, span=1):
+        outer, inner = card(panels, padding=10)
+        outer.grid(
+            row=row,
+            column=column,
+            columnspan=span,
+            sticky="nsew",
+            padx=(0, 4) if column == 0 and span == 1 else (4, 0) if span == 1 else 0,
+            pady=(0, 8),
+        )
+        section_header(inner, title).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        inner.grid_columnconfigure(1, weight=1)
+        return inner
 
-        label.grid(row=grid_row, column=0, sticky='e', padx=(5,2), pady=6)
-        if key == "target":
-            # Ensure the entry is a child of the frame and the StringVar is stored
-            var = tk.StringVar()
-            if config_vars.get(key) is not None and config_vars[key].get():
-                var.set(config_vars[key].get())
-            settings_vars[key] = var
-            entry = tk.Entry(target_frame := tk.Frame(scrollable_frame), textvariable=var)
-            target_frame.grid(row=grid_row, column=1, sticky='we', padx=(2,10), pady=6)
-            target_frame.grid_columnconfigure(0, weight=1)
-            entry.grid(row=0, column=0, sticky='we')
-            refresh_button = tk.Button(
-                target_frame,
-                text="Refresh from Stellarium",
-                width=20,  # Set a fixed width to accommodate the longest text
-                command=lambda: refresh_stellarium_data_in_background(settings_vars, config_vars, button=refresh_button)
-            )
-            refresh_button.grid(row=0, column=1, sticky='e', padx=(6, 0))
-        elif key == "target_type":
-            entry.grid(row=grid_row, column=1, sticky='w', padx=(2,10), pady=6)
-        elif key == "target_solar":
-            var = tk.StringVar()
-            entry = ttk.Combobox(scrollable_frame, textvariable=var, values=solar_system_objects)
-            entry.grid(row=grid_row, column=1, sticky='we', padx=(2,10), pady=6)
-            settings_vars[key] = var
-        else:
-            entry.grid(row=grid_row, column=1, sticky='we', padx=(2,10), pady=6)
-        if key == "max_retries":
-            # ACTIONS checkboxes row
-            actions_label = tk.Label(scrollable_frame, width=20, text="ACTIONS", anchor='w')
-            actions_label.grid(row=grid_row+1, column=0, sticky='e', padx=(5,2), pady=6)
-            actions_frame = tk.Frame(scrollable_frame)
-            actions_frame.grid(row=grid_row+1, column=1, sticky='w', padx=(2,10), pady=6)
-            auto_focus_var = tk.BooleanVar()
-            auto_focus_checkbox = tk.Checkbutton(actions_frame, text="Auto Focus", variable=auto_focus_var)
-            auto_focus_checkbox.pack(side=tk.LEFT, padx=5)
-            settings_vars["auto_focus"] = auto_focus_var
-            infinite_focus_var = tk.BooleanVar()
-            infinite_focus_checkbox = tk.Checkbutton(actions_frame, text="Infinite Focus", variable=infinite_focus_var)
-            infinite_focus_checkbox.pack(side=tk.LEFT, padx=5)
-            settings_vars["infinite_focus"] = infinite_focus_var
-            eq_solving_var = tk.BooleanVar()
-            eq_solving_checkbox = tk.Checkbutton(actions_frame, text="EQ Solving", variable=eq_solving_var)
-            eq_solving_checkbox.pack(side=tk.LEFT, padx=5)
-            settings_vars["eq_solving"] = eq_solving_var
-            calibration_var = tk.BooleanVar()
-            calibration_checkbox = tk.Checkbutton(actions_frame, text="Calibration", variable=calibration_var)
-            calibration_checkbox.pack(side=tk.LEFT, padx=5)
-            settings_vars["calibration"] = calibration_var
-            grid_row += 1
-        grid_row += 1
+    session_inner = make_card("Session", 0, 0)
+    form_row(session_inner, 1, "Description", ttk.Entry(session_inner, textvariable=_var("description")))
+    date_var = _var("date")
+    date_entry = DateEntry(session_inner, textvariable=date_var, date_pattern="yyyy-mm-dd")
+    style_date_entry(date_entry)
+    form_row(session_inner, 2, "Date (YYYY-MM-DD)", date_entry)
+    form_row(
+        session_inner,
+        3,
+        "Time (HH:MM:SS)",
+        ttk.Entry(session_inner, textvariable=_var("time", current_datetime.strftime("%H:%M:%S"))),
+    )
+    form_row(session_inner, 4, "Max Retries", ttk.Entry(session_inner, textvariable=_var("max_retries", "2")))
 
-    # Time field
-    time_label = tk.Label(scrollable_frame, width=20, text="Time (HH:MM:SS)", anchor='w')
-    time_var = tk.StringVar()
-    time_entry = tk.Entry(scrollable_frame, textvariable=time_var)
-    settings_vars["time"] = time_var
-    time_label.grid(row=grid_row, column=0, sticky='e', padx=(5,2), pady=6)
-    time_entry.grid(row=grid_row, column=1, sticky='we', padx=(2,10), pady=6)
-    time_var.set(current_datetime.strftime('%H:%M:%S'))
-    grid_row += 1
+    action_inner = make_card("Actions", 1, 0, 2)
+    actions_frame = ttk.Frame(action_inner, style="Card.TFrame")
+    auto_focus_var = tk.BooleanVar()
+    infinite_focus_var = tk.BooleanVar()
+    eq_solving_var = tk.BooleanVar()
+    calibration_var = tk.BooleanVar()
+    settings_vars["auto_focus"] = auto_focus_var
+    settings_vars["infinite_focus"] = infinite_focus_var
+    settings_vars["eq_solving"] = eq_solving_var
+    settings_vars["calibration"] = calibration_var
+    ttk.Checkbutton(actions_frame, text="Auto Focus", variable=auto_focus_var).pack(side="left", padx=(0, 12))
+    ttk.Checkbutton(actions_frame, text="Infinite Focus", variable=infinite_focus_var).pack(side="left", padx=(0, 12))
+    ttk.Checkbutton(actions_frame, text="EQ Solving", variable=eq_solving_var).pack(side="left", padx=(0, 12))
+    ttk.Checkbutton(actions_frame, text="Calibration", variable=calibration_var).pack(side="left")
+    form_row(action_inner, 1, "ACTIONS", actions_frame)
+    form_row(action_inner, 2, "Wait Before Action in s.", ttk.Entry(action_inner, textvariable=_var("wait_before", "10")))
+    form_row(action_inner, 3, "Wait After Action in s.", ttk.Entry(action_inner, textvariable=_var("wait_after", "10")))
 
-    # Create form fields for device type, exposure, gain, and filter
-    create_form_fields(scrollable_frame, settings_vars, config_vars)
+    target_inner = make_card("Target", 2, 0, 2)
+    type_frame = ttk.Frame(target_inner, style="Card.TFrame")
+    create_mutually_exclusive_checkboxes(
+        type_frame, var_goto_solar, var_goto_manual, var_no_goto, "Solar System", "Manual", "None"
+    )
+    form_row(target_inner, 1, "Target Type", type_frame)
+    form_row(
+        target_inner,
+        2,
+        "Solar System Object",
+        ttk.Combobox(target_inner, textvariable=_var("target_solar"), values=solar_system_objects),
+    )
+    target_row = ttk.Frame(target_inner, style="Card.TFrame")
+    target_row.grid_columnconfigure(0, weight=1)
+    ttk.Entry(target_row, textvariable=_var("target")).grid(row=0, column=0, sticky="ew")
+    refresh_button = ttk.Button(
+        target_row,
+        text="Refresh from Stellarium",
+        command=lambda: refresh_stellarium_data_in_background(settings_vars, config_vars, button=refresh_button),
+    )
+    refresh_button.grid(row=0, column=1, padx=(8, 0))
+    form_row(target_inner, 3, "Manual Target", target_row)
+    form_row(target_inner, 4, "RA (dec or HH:mm:ss.s)", ttk.Entry(target_inner, textvariable=_var("ra_coord")))
+    form_row(target_inner, 5, "Dec (dec or ±DD:mm:ss.s)", ttk.Entry(target_inner, textvariable=_var("dec_coord")))
+    form_row(
+        target_inner,
+        6,
+        "Wait After Goto in s.",
+        ttk.Entry(target_inner, textvariable=_var("wait_after_target", "30")),
+    )
 
-    # Add a spacer row to push Save and Import CSV to the bottom if possible
-    scrollable_frame.grid_rowconfigure(grid_row, weight=1)
-    grid_row += 1
-
-    # Save button
-    save_button = tk.Button(scrollable_frame, text="Save", command=lambda: save_to_json(settings_vars, config_vars))
-    save_button.grid(row=grid_row, column=0, columnspan=3, pady=10, sticky='s')
-    grid_row += 1
-
-    # Import CSV section
-    import_frame = tk.Frame(scrollable_frame, borderwidth=2, relief="groove")
-    import_frame.grid(row=grid_row, column=0, columnspan=3, sticky='we', pady=10, padx=5)
-    import_label = tk.Label(import_frame, text="Import Telescopius Mosaic or List CSV, it will take the values from your settings", fg="#555555")
-    import_label.pack(pady=(10, 5), padx=10)
-    import_csv_button = ttk.Button(import_frame, text="Import CSV", command=lambda: import_csv_and_generate_json(settings_vars, config_vars))
-    import_csv_button.pack(pady=(0, 10), padx=10)
-
-    # Initialize the "uuid" key in settings_vars
-    settings_vars["uuid"] = tk.StringVar()
-    
-    # Initial update of exposure and gain dropdowns based on current config
+    imaging_inner = make_card("Imaging", 0, 1)
+    form_row(
+        imaging_inner,
+        1,
+        "Imaging count (0 Not Do)",
+        ttk.Entry(imaging_inner, textvariable=_var("count")),
+    )
+    form_row(
+        imaging_inner,
+        2,
+        "Wait After Session in s.",
+        ttk.Entry(imaging_inner, textvariable=_var("wait_after_camera", "20")),
+    )
     config = load_from_config()
+    exposure_var = tk.StringVar()
+    gain_var = tk.StringVar()
+    if config_vars.get("exposure") is not None and config_vars["exposure"].get():
+        exposure_var.set(config_vars["exposure"].get())
+    else:
+        exposure_var.set(config.get("CONFIG", "exposure", fallback="30"))
+    if config_vars.get("gain") is not None and config_vars["gain"].get():
+        gain_var.set(config_vars["gain"].get())
+    else:
+        gain_var.set(config.get("CONFIG", "gain", fallback="90"))
+    exposure_dropdown = ttk.Combobox(imaging_inner, textvariable=exposure_var)
+    gain_dropdown = ttk.Combobox(imaging_inner, textvariable=gain_var)
+    settings_vars["exposure"] = exposure_var
+    settings_vars["gain"] = gain_var
+    settings_vars["exposure_dropdown"] = exposure_dropdown
+    settings_vars["gain_dropdown"] = gain_dropdown
+    form_row(imaging_inner, 3, "Exposure", exposure_dropdown)
+    form_row(imaging_inner, 4, "Gain", gain_dropdown)
+
+    save_inner = make_card("Save", 3, 1)
+    ttk.Button(
+        save_inner,
+        text="Save",
+        style="Accent.TButton",
+        command=lambda: save_to_json(settings_vars, config_vars),
+    ).grid(row=1, column=0, columnspan=2, sticky="w")
+
+    import_inner = make_card("Import CSV", 3, 0)
+    hint_label(
+        import_inner,
+        "Import Telescopius Mosaic or List CSV. Imported rows use your current settings.",
+    ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 8))
+    ttk.Button(
+        import_inner,
+        text="Import CSV",
+        command=lambda: import_csv_and_generate_json(settings_vars, config_vars),
+    ).grid(row=2, column=0, sticky="w")
+
+    settings_vars["uuid"] = tk.StringVar()
     device_type = config.get("CONFIG", "device_type", fallback="Dwarf II")
     update_exposure_gain_dropdowns_from_camera_type(device_type, settings_vars)
 

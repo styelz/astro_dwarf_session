@@ -5,6 +5,7 @@ import json
 import os
 import csv
 from datetime import datetime, timedelta
+from ui.widgets import card, section_header
 
 # Directories
 TIME_CHANGE_DAY = 18
@@ -36,47 +37,48 @@ def autosize_columns(treeview, padding, max_width_col = 0):
         treeview.column(col, width=max_width + padding)  # Add padding
 
 def result_session_tab(parent_frame):
+    parent_frame.grid_rowconfigure(1, weight=1)
+    parent_frame.grid_rowconfigure(2, weight=1)
+    parent_frame.grid_columnconfigure(0, weight=1)
 
-    # Top frame for combobox and refresh button
-    top_frame = ttk.Frame(parent_frame)
-    top_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(20, 10))
+    toolbar_card, top_frame = card(parent_frame)
+    toolbar_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+    top_frame.grid_columnconfigure(1, weight=1)
 
-    combobox_label = ttk.Label(top_frame, text="Select Observation File:")
-    combobox_label.pack(side=tk.LEFT, padx=(0, 5))
-
+    ttk.Label(top_frame, text="Observation file", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
     combobox = ttk.Combobox(top_frame, state="readonly")
-    combobox.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    combobox.grid(row=0, column=1, sticky="ew")
 
-    # Table frame for displaying OK and Error sessions
-    table_frame = ttk.Frame(parent_frame)
-    table_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True, padx=10, pady=0)
-
-    # OK Treeview
-    ok_frame = ttk.Frame(table_frame)
-    ok_frame.pack(fill=tk.BOTH, expand=True)
-
-    ok_label = ttk.Label(ok_frame, text="Sessions OK")
-    ok_label.pack()
+    ok_card, ok_frame = card(parent_frame)
+    ok_card.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
+    ok_frame.grid_rowconfigure(1, weight=1)
+    ok_frame.grid_columnconfigure(0, weight=1)
+    section_header(ok_frame, "Sessions OK").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
     ok_treeview = ttk.Treeview(ok_frame, columns=columns_OK, show='headings', height=10)
     default_width = 100
     for col in columns_OK:
         ok_treeview.heading(col, text=col)
         ok_treeview.column(col, anchor="center", width=default_width)
-    ok_treeview.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    ok_treeview.grid(row=1, column=0, sticky="nsew")
+    ok_scroll = ttk.Scrollbar(ok_frame, orient="vertical", command=ok_treeview.yview)
+    ok_scroll.grid(row=1, column=1, sticky="ns")
+    ok_treeview.configure(yscrollcommand=ok_scroll.set)
 
-    # Error Treeview
-    error_frame = ttk.Frame(table_frame)
-    error_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-    error_label = ttk.Label(error_frame, text="Error Sessions")
-    error_label.pack()
+    error_card, error_frame = card(parent_frame)
+    error_card.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
+    error_frame.grid_rowconfigure(1, weight=1)
+    error_frame.grid_columnconfigure(0, weight=1)
+    section_header(error_frame, "Error Sessions").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
     error_treeview = ttk.Treeview(error_frame, columns=columns_KO, show='headings', height=10)
     for col in columns_KO:
         error_treeview.heading(col, text=col)
         error_treeview.column(col, anchor="center")
-    error_treeview.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    error_treeview.grid(row=1, column=0, sticky="nsew")
+    error_scroll = ttk.Scrollbar(error_frame, orient="vertical", command=error_treeview.yview)
+    error_scroll.grid(row=1, column=1, sticky="ns")
+    error_treeview.configure(yscrollcommand=error_scroll.set)
 
     # init results
     refresh_observation_list(combobox, ok_treeview, error_treeview)
@@ -106,9 +108,9 @@ def result_session_tab(parent_frame):
         refresh()
 
     update_button = ttk.Button(top_frame, text="Update Results", command=lambda: refresh())
-    update_button.pack(side=tk.LEFT, padx=(10, 5))
-    delete_button = ttk.Button(top_frame, text="Delete File", command=delete_selected_file)
-    delete_button.pack(side=tk.LEFT, padx=5)
+    update_button.grid(row=0, column=2, padx=(10, 5))
+    delete_button = ttk.Button(top_frame, text="Delete File", command=delete_selected_file, style="Danger.TButton")
+    delete_button.grid(row=0, column=3)
 
     # Autosize the columns based on the content
     padding = 1
@@ -192,8 +194,17 @@ def load_csv_data(filename):
 
 def update_treeview(treeview, data, columns):
     treeview.delete(*treeview.get_children())
-    for row in data:
-        treeview.insert('', tk.END, values=[row[col] for col in columns])
+    treeview.tag_configure("odd", background="")
+    treeview.tag_configure("even", background="")
+    try:
+        from ui.theme import palette
+        treeview.tag_configure("even", background=palette["row_alt"])
+        treeview.tag_configure("odd", background=palette["input_bg"])
+    except Exception:
+        pass
+    for index, row in enumerate(data):
+        tag = "even" if index % 2 == 0 else "odd"
+        treeview.insert("", tk.END, values=[row[col] for col in columns], tags=(tag,))
 
 def on_file_select(event, combobox, ok_treeview, error_treeview):
     selected_file = combobox.get()

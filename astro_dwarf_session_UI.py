@@ -13,7 +13,7 @@ import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import messagebox, ttk
 from astro_dwarf_scheduler import check_and_execute_commands, start_connection, start_STA_connection, setup_new_config
-from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto, perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, unset_HostMaster, set_HostMaster, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown, perform_reboot
+from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto, perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, perform_set_preview_quality, unset_HostMaster, set_HostMaster, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown, perform_reboot
 from dwarf_python_api.lib.dwarf_utils import perform_powerOpenRGB, perform_powerCloseRGB, perform_powerIndOn, perform_powerIndOff
 from dwarf_python_api.lib.websockets_utils import get_client_status
 from astro_dwarf_scheduler import LIST_ASTRO_DIR, get_json_files_sorted
@@ -32,6 +32,20 @@ from tabs import settings
 from tabs import create_session
 from tabs import overview_session
 from tabs import result_session
+from ui.theme import apply_theme, load_appearance, palette, fonts, style_log_text
+from ui.widgets import (
+    VIDEO_ASPECT,
+    ScrollingLabel,
+    card,
+    hex_to_rgb,
+    hide_native_titlebar,
+    hint_label,
+    install_mousewheel,
+    section_header,
+    status_label,
+    tab_bar,
+    title_bar,
+)
 
 # import directories
 from astro_dwarf_scheduler import CONFIG_DEFAULT, BASE_DIR, LIST_ASTRO_DIR_DEFAULT
@@ -146,8 +160,18 @@ class Tooltip:
         self.tooltip_window = tk.Toplevel(self.widget)
         self.tooltip_window.wm_overrideredirect(True)
         self.tooltip_window.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(self.tooltip_window, text=self.text, background="lightyellow", borderwidth=1, relief="solid")
-        label.pack()
+        self.tooltip_window.configure(bg=palette["border"])
+        label = tk.Label(
+            self.tooltip_window,
+            text=self.text,
+            background=palette["tooltip_bg"],
+            foreground=palette["tooltip_fg"],
+            font=fonts["body"],
+            borderwidth=0,
+            padx=8,
+            pady=6,
+        )
+        label.pack(padx=1, pady=1)
 
     def hide_tooltip(self, event=None):
         if self.tooltip_window:
@@ -168,120 +192,291 @@ class TextHandler(logging.Handler):
         msg = self.format(record)
         # Determine color and emoji based on log level
         if record.levelno >= logging.ERROR:
-            color = 'red'
-            emoji = '✗ '
+            tag = "error"
+            emoji = "✗ "
         elif record.levelno == logging.WARNING:
-            color = 'orange'
-            emoji = '⚠ '
+            tag = "warning"
+            emoji = "⚠ "
         elif record.levelno == logging.INFO:
-            color = 'gray'
-            emoji = 'ℹ '
+            tag = "info"
+            emoji = "ℹ "
         elif record.levelno == 25:
-            color = 'green'
-            emoji = '✓ '
+            tag = "success"
+            emoji = "✓ "
         else:
-            color = 'black'
-            emoji = '⇒ '
+            tag = "default"
+            emoji = "⇒ "
 
-        # Insert with tag for color
         self.text_widget.config(state=tk.NORMAL)
-        self.text_widget.insert(tk.END, emoji + msg + '\n', color)
-        self.text_widget.tag_config(color, foreground=color)
+        self.text_widget.insert(tk.END, emoji + msg + "\n", tag)
         self.text_widget.yview(tk.END)
 
 # GUI Application class
 class AstroDwarfSchedulerApp(tk.Tk):
-    def start_video_preview(self):
+    def _is_dwarf_connected(self):
+        """True when the WebSocket client is up and the device is reachable."""
         try:
-            from PIL import Image, ImageTk
-        except ImportError:
-            self.video_canvas.config(text="Install Pillow for video preview.")
-            return
+            status = get_client_status()
+            if isinstance(status, str):
+                try:
+                    status = json.loads(status)
+                except Exception:
+                    return False
+            if not isinstance(status, dict):
+                return False
+            if status.get("error"):
+                return False
+            return "fullStatus" in status
+        except Exception:
+            return False
 
-        # Prevent starting multiple video worker threads
-        if hasattr(self, '_video_worker_running') and self._video_worker_running:
+    def _ensure_live_preview_mode(self):
+        """Ask the telescope to enter live/preview mode. Never call during imaging."""
+        if getattr(self, "session_running", False):
             return
-            
+        if not self._is_dwarf_connected():
+            self.log("Telescope not connected; waiting for live mode / first frame", level="warning")
+            return
+        try:
+            if perform_GoLive():
+                self.log("Go Live succeeded", level="success")
+            else:
+                self.log("Go Live failed or was skipped", level="warning")
+        except Exception as e:
+            self.log(f"Go Live error: {e}", level="error")
+        try:
+            if perform_set_preview_quality(1):
+                self.log("Preview quality set", level="success")
+            else:
+                self.log("Preview quality not set (non-blocking)", level="warning")
+        except Exception as e:
+            self.log(f"Preview quality error: {e}", level="warning")
+
+    def _set_video_status(self, text, clear_image=True):
+        try:
+            if clear_image:
+                self.video_canvas.config(image="", text=text)
+                self._video_photo = None
+            else:
+                self.video_canvas.config(text=text)
+        except Exception:
+            pass
+
+    def _resolve_video_stream_url(self):
         dwarf_ip = "127.0.0.1"
         data_config = config_py.get_config_data()
-        if data_config["ip"]:
-            dwarf_ip = data_config['ip']
+        if data_config.get("ip"):
+            dwarf_ip = data_config["ip"]
         self.video_stream_url = f"http://{dwarf_ip}:8092/mainstream"
+        return self.video_stream_url
+
+    def _video_wait(self, seconds):
+        """Sleep in short slices so stop/reconnect flags are noticed quickly."""
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            if getattr(self, "_stop_video_stream", False):
+                return False
+            if getattr(self, "_reconnect_video_stream", False):
+                return False
+            time.sleep(0.1)
+        return True
+
+    def reconnect_video_preview(self):
+        """Drop the current HTTP pull so the worker opens a fresh socket."""
+        self._stop_video_stream = False
+        if getattr(self, "_video_worker_running", False):
+            self._reconnect_video_stream = True
+            self.log("Reconnecting video stream")
+            return
+        self.start_video_preview(ensure_live=False)
+
+    def start_video_preview(self, ensure_live=True):
+        try:
+            from PIL import Image  # noqa: F401
+        except ImportError:
+            self.after(0, lambda: self._set_video_status("Install Pillow for video preview."))
+            return
+
+        self._stop_video_stream = False
+        self._resolve_video_stream_url()
+
+        if ensure_live and not getattr(self, "session_running", False):
+            self._request_live_mode = True
+
+        if getattr(self, "_video_worker_running", False):
+            self._reconnect_video_stream = True
+            return
 
         def video_stream_worker():
             self._video_worker_running = True
             print("Starting video stream worker")
-            while not getattr(self, '_stop_video_stream', False):
+            current_url = self._resolve_video_stream_url()
+            self.log(f"Video stream: {current_url}")
+
+            while not getattr(self, "_stop_video_stream", False):
+                self._reconnect_video_stream = False
+                current_url = self._resolve_video_stream_url()
+                if getattr(self, "_request_live_mode", False):
+                    self._request_live_mode = False
+                    self._ensure_live_preview_mode()
+                stream = None
                 try:
-                    # Show attempting to connect status
-                    self.after(0, lambda: self.video_canvas.config(image='', text="Attempting to connect..."))
-                    #print(f"Connecting to video stream on IP: {dwarf_ip}...")
-                    stream = requests.get(self.video_stream_url, stream=True, timeout=60)
+                    self.after(0, lambda: self._set_video_status("Attempting to connect..."))
+                    stream = requests.get(
+                        current_url, stream=True, timeout=(5, 3)
+                    )
+                    if stream.status_code != 200:
+                        self.log(
+                            f"Video HTTP {stream.status_code} from {current_url}",
+                            level="warning",
+                        )
+                        stream.close()
+                        stream = None
+                        raise requests.exceptions.HTTPError(
+                            f"HTTP {stream.status_code} for {current_url}"
+                        )
+
+                    self.after(
+                        0,
+                        lambda: self._set_video_status(
+                            "Waiting for live mode / first frame..."
+                        ),
+                    )
                     bytes_data = b""
                     last_update = 0
-                    # Show connected status
-                    self.after(0, lambda: self.video_canvas.config(text="Connected - streaming video"))
-                    for chunk in stream.iter_content(chunk_size=1024):
-                        bytes_data += chunk
-                        # Look for JPEG start and end markers
-                        a = bytes_data.find(b'\xff\xd8')
-                        b = bytes_data.find(b'\xff\xd9')
-                        if a != -1 and b != -1:
-                            jpg = bytes_data[a:b+2]
-                            bytes_data = bytes_data[b+2:]
-                            try:
-                                image = Image.open(io.BytesIO(jpg)).resize((320, 180)) # Resize to fit the preview frame
-                                photo = ImageTk.PhotoImage(image)
-                                now = time.time()
-                                # Limit update rate to avoid overwhelming the UI
-                                if now - last_update > 0.3:
-                                    self.after(0, self.update_video_canvas, photo)
-                                    last_update = now
-                            except Exception as e:
-                                print(f"Error processing video stream chunk: {e}")
-                                # Log image processing errors but continue
-                                pass
-                        if getattr(self, '_stop_video_stream', False):
-                            print("Stopping video stream worker")
-                            self.after(0, lambda: self.video_canvas.config(image='', text="Video stream is off"))
-                            break
-                    # If we got here, stream ended or stopped, retry after short delay
-                except requests.exceptions.RequestException as e:
-                    # Handle network-related errors - only show "off" if stream was actually stopped
-                    if getattr(self, '_stop_video_stream', False):
-                        self.after(0, lambda: self.video_canvas.config(image='', text="Video stream is off"))
-                    # If not stopped, the retry logic below will handle the status
-                except Exception as e:
-                    # Handle any other unexpected errors - only show "off" if stream was actually stopped 
-                    if getattr(self, '_stop_video_stream', False):
-                        self.after(0, lambda: self.video_canvas.config(image='', text="Video stream is off"))
-                    # If not stopped, the retry logic below will handle the status
+                    connect_time = time.time()
+                    got_frame = False
 
-                # Show retry status if still trying to connect (but not immediately stopped)
-                if not getattr(self, '_stop_video_stream', False):
-                    # Show connection failed first
-                    self.after(0, lambda: self.video_canvas.config(text="Connection failed"))
-                    
-                    # Wait 2 seconds before showing retry message
-                    time.sleep(2)
-                    
-                    # Check again if we should still retry (user might have stopped stream during the 2 second wait)
-                    if not getattr(self, '_stop_video_stream', False):
-                        self.after(0, lambda: self.video_canvas.config(text="Retrying connection..."))
-                
-                # Wait additional time before retrying connection
-                time.sleep(3)
-            
-            # Mark worker as stopped when exiting
+                    for chunk in stream.iter_content(chunk_size=1024):
+                        if getattr(self, "_stop_video_stream", False):
+                            print("Stopping video stream worker")
+                            break
+                        if getattr(self, "_reconnect_video_stream", False):
+                            self.log("Reconnecting video stream")
+                            break
+
+                        if chunk:
+                            bytes_data += chunk
+
+                        while True:
+                            start = bytes_data.find(b"\xff\xd8")
+                            if start == -1:
+                                if len(bytes_data) > 1:
+                                    bytes_data = bytes_data[-1:]
+                                break
+                            end = bytes_data.find(b"\xff\xd9", start + 2)
+                            if end == -1:
+                                if start > 0:
+                                    bytes_data = bytes_data[start:]
+                                if len(bytes_data) > 2_000_000:
+                                    bytes_data = bytes_data[-64:]
+                                break
+                            jpg = bytes_data[start : end + 2]
+                            bytes_data = bytes_data[end + 2 :]
+                            now = time.time()
+                            if now - last_update > 0.3:
+                                last_update = now
+                                self.after(0, self.update_video_canvas, jpg)
+                                if not got_frame:
+                                    got_frame = True
+                                    self.log(
+                                        f"First video frame from {current_url}",
+                                        level="success",
+                                    )
+
+                        if not got_frame and (time.time() - connect_time) > 5:
+                            self.log(
+                                "No video frames received, reconnecting",
+                                level="warning",
+                            )
+                            self.after(
+                                0,
+                                lambda: self._set_video_status(
+                                    "No frames yet, reconnecting..."
+                                ),
+                            )
+                            self._reconnect_video_stream = True
+                            break
+                except requests.exceptions.RequestException as e:
+                    if not getattr(self, "_stop_video_stream", False):
+                        self.log(f"Video stream error: {e}", level="warning")
+                except Exception as e:
+                    if not getattr(self, "_stop_video_stream", False):
+                        self.log(f"Video stream error: {e}", level="warning")
+                finally:
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
+
+                if getattr(self, "_stop_video_stream", False):
+                    self.after(0, lambda: self._set_video_status("Video stream is off"))
+                    break
+
+                if getattr(self, "_reconnect_video_stream", False):
+                    continue
+
+                self.after(0, lambda: self._set_video_status("Connection failed"))
+                if not self._video_wait(2):
+                    if getattr(self, "_stop_video_stream", False):
+                        self.after(0, lambda: self._set_video_status("Video stream is off"))
+                        break
+                    continue
+
+                self.after(0, lambda: self._set_video_status("Retrying connection..."))
+                if not self._video_wait(3):
+                    if getattr(self, "_stop_video_stream", False):
+                        self.after(0, lambda: self._set_video_status("Video stream is off"))
+                        break
+
             self._video_worker_running = False
             print("Video stream worker stopped")
+            if not getattr(self, "_stop_video_stream", False):
+                self.after(0, lambda: self.start_video_preview(ensure_live=False))
 
         threading.Thread(target=video_stream_worker, daemon=True).start()
 
-    def update_video_canvas(self, photo):
-        self.video_canvas.config(image=photo)
-        self._video_photo = photo  # Keep a reference to avoid garbage collection
-        
+    def update_video_canvas(self, frame):
+        try:
+            from PIL import Image, ImageTk
+
+            if isinstance(frame, (bytes, bytearray)):
+                image = Image.open(io.BytesIO(frame))
+            else:
+                image = frame
+            width = max(self.video_canvas.winfo_width(), 320)
+            height = max(self.video_canvas.winfo_height(), 180)
+            image = self._fit_preview_frame(image, width, height)
+            photo = ImageTk.PhotoImage(image)
+            self.video_canvas.config(image=photo, text="")
+            self._video_photo = photo
+        except Exception as e:
+            print(f"Error updating video canvas: {e}")
+
+    def _fit_preview_frame(self, image, box_w, box_h):
+        """Scale a stream frame into the 16:9 viewfinder without stretching."""
+        from PIL import Image
+
+        box_w = max(int(box_w), 1)
+        box_h = max(int(box_h), 1)
+        fill = hex_to_rgb(palette["video_bg"])
+        canvas = Image.new("RGB", (box_w, box_h), fill)
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        src_ratio = image.width / max(image.height, 1)
+        box_ratio = box_w / box_h
+        if src_ratio > box_ratio:
+            new_w = box_w
+            new_h = max(1, int(box_w / src_ratio))
+        else:
+            new_h = box_h
+            new_w = max(1, int(box_h * src_ratio))
+        resample = getattr(Image, "Resampling", Image).LANCZOS
+        fitted = image.resize((new_w, new_h), resample)
+        canvas.paste(fitted, ((box_w - new_w) // 2, (box_h - new_h) // 2))
+        return canvas
+
     def toggle_video_stream(self, event=None):
         """Toggle video stream on/off when canvas is single-clicked (with delay to avoid double-click conflict)."""
         # Cancel any existing single-click timer
@@ -312,10 +507,11 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.after_cancel(self._single_click_timer)
             self._single_click_timer = None
             
-        if hasattr(self, 'video_stream_url') and self.video_stream_url:
+        stream_url = getattr(self, "video_stream_url", None) or self._resolve_video_stream_url()
+        if stream_url:
             try:
-                webbrowser.open(self.video_stream_url)
-                self.log(f"Opening video stream in browser: {self.video_stream_url}")
+                webbrowser.open(stream_url)
+                self.log(f"Opening video stream in browser: {stream_url}")
             except Exception as e:
                 self.log(f"Error opening video stream in browser: {e}", level="error")
         else:
@@ -326,7 +522,10 @@ class AstroDwarfSchedulerApp(tk.Tk):
         super().__init__()
                 
         self.title("Astro Dwarf Scheduler")
-        self.geometry("810x800")
+        self.geometry("960x840")
+        self.minsize(900, 700)
+        apply_theme(self, load_appearance())
+        install_mousewheel(self)
         
         # Set window icon
         try:
@@ -361,17 +560,53 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.scheduler_running = False
         self.scheduler_stopped = True
         self.scheduler_stop_event = threading.Event()
+        self.session_running = False
+        self.session_stop_event = threading.Event()
         self.unset_lock_device_mode = True
         self.bluetooth_connected = False
         self.result = False
         self.stellarium_connection = None
         self.skip_time_checks = False
         self._video_worker_running = False
+        self._reconnect_video_stream = False
+        self._request_live_mode = False
         self._single_click_timer = None
 
-        # Create tabs
+        self.title_bar, self._max_btn = title_bar(
+            self,
+            "Astro Dwarf Scheduler",
+            on_minimize=self.minimize_window,
+            on_maximize=self.toggle_maximize,
+            on_close=self.quit_method,
+        )
+        self.title_bar.pack(fill="x", side="top")
+
+        self._tab_ids = [
+            "main",
+            "settings",
+            "overview",
+            "results",
+            "create",
+            "edit",
+        ]
+        self.tab_strip = tab_bar(
+            self,
+            [
+                ("main", "Main"),
+                ("settings", "Settings"),
+                ("overview", "Session Overview"),
+                ("results", "Results Session"),
+                ("create", "Create Session"),
+                ("edit", "Edit Sessions"),
+            ],
+            self._on_custom_tab,
+            initial="main",
+        )
+        self.tab_strip.pack(fill="x", side="top")
+
+        # Create tabs (native notebook tabs are hidden; the custom strip switches pages)
         self.tab_control = ttk.Notebook(self)
-        self.tab_control.pack(expand=1, fill="both", pady=(5, 0))
+        self.tab_control.pack(expand=1, fill="both")
 
         self.tab_main = ttk.Frame(self.tab_control)
         self.tab_settings = ttk.Frame(self.tab_control)
@@ -465,7 +700,38 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 pass
 
         self.tab_control.bind("<<NotebookTabChanged>>", on_tab_changed)
-        
+        apply_theme(self, load_appearance())
+        self.after(50, self._apply_custom_chrome)
+        self.bind("<Map>", self._on_window_map)
+
+    def _on_custom_tab(self, tab_id):
+        try:
+            index = self._tab_ids.index(tab_id)
+            self.tab_control.select(index)
+        except (ValueError, tk.TclError):
+            pass
+
+    def minimize_window(self):
+        self.iconify()
+
+    def toggle_maximize(self):
+        if self.state() == "zoomed":
+            self.state("normal")
+            if hasattr(self, "_max_btn"):
+                self._max_btn.config(text="□")
+        else:
+            self.state("zoomed")
+            if hasattr(self, "_max_btn"):
+                self._max_btn.config(text="❐")
+        self.after(20, self._apply_custom_chrome)
+
+    def _apply_custom_chrome(self):
+        hide_native_titlebar(self)
+
+    def _on_window_map(self, event):
+        if event.widget is self:
+            self.after(20, self._apply_custom_chrome)
+
     def update_create_session_defaults(self):
         """Update Create Session tab defaults from current config - only call when settings change"""
         if hasattr(self, 'settings_vars'):
@@ -648,10 +914,10 @@ class AstroDwarfSchedulerApp(tk.Tk):
             row_config = 0
             row_entry = 1
     
-            self.combobox_label.grid(row=row_config, column=1, sticky="w", padx=5)
-            self.config_combobox.grid(row=row_config, column=2, sticky="w", padx=5)
-            self.entry_label.grid(row=row_entry, column=1, sticky="w", padx=5)
-            self.entry_button_frame.grid(row=row_entry, column=2, sticky="w", padx=(5, 0))
+            self.combobox_label.grid(row=row_config, column=1, sticky="e", padx=(0, 4), pady=2)
+            self.config_combobox.grid(row=row_config, column=2, sticky="ew", padx=(0, 8), pady=2)
+            self.entry_label.grid(row=row_entry, column=1, sticky="e", padx=(0, 4), pady=2)
+            self.entry_button_frame.grid(row=row_entry, column=2, sticky="w", pady=2)
             self.show_current_config(CONFIG_DEFAULT)
         else:
             self.config_combobox.set("")
@@ -778,241 +1044,293 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.powerdown_button.config(state=other_state)
         self.reboot_button.config(state=other_state)
         self.toggle_lights_button.config(state=other_state)
-        self.stop_session_button.config(state=other_state)
+        self._sync_stop_session_button()
+
+    def _sync_stop_session_button(self):
+        """Stop Session is only usable while a session is actually running."""
+        running = (
+            getattr(self, "scheduler_running", False)
+            and getattr(self, "session_running", False)
+        )
+        try:
+            if hasattr(self, "stop_session_button"):
+                self.stop_session_button.config(
+                    state=tk.NORMAL if running else tk.DISABLED
+                )
+        except tk.TclError:
+            pass
 
     def create_main_tab(self):
         self.log_text = None
-        # Multiple configuration prompt label
-        self.labelConfig = tk.Label(self.tab_main, text="Configuration", font=("Arial", 12))
-        self.labelConfig.pack(anchor="w", padx=10, pady=(10,0))
+        from astro_dwarf_scheduler import LIST_ASTRO_DIR
+        from ui.theme import status_color
 
-        # --- Video Preview Frame (top right) ---
-        preview_frame = tk.Frame(self.tab_main, bd=1, relief="solid")
-        preview_frame.place(relx=1.0, x=-15, y=25, anchor="ne", width=320, height=180, bordermode="outside")  # 16:9 aspect ratio (320:180)
-        preview_frame.pack_propagate(False)
-        self.video_canvas = tk.Label(preview_frame, text="Video stream is off", bg="lightgray", fg="black")
-        self.video_canvas.pack(fill="both", expand=True)
-        # Bind single click to toggle video stream and double click to open in browser
-        self.video_canvas.bind("<Button-1>", self.toggle_video_stream)
-        self.video_canvas.bind("<Double-Button-1>", self.open_video_stream_in_browser)
-        self.video_canvas.config(cursor="hand2")  # Change cursor to indicate clickable
-        # Add tooltip to indicate video canvas functionality
-        Tooltip(self.video_canvas, "Single click: Toggle video stream\nDouble click: Open stream in browser")
-        self._stop_video_stream = True
-        # Video stream is now manually controlled by user clicks
+        gap = 8
+        pad = 12
+        self.tab_main.grid_rowconfigure(1, weight=1)
+        self.tab_main.grid_columnconfigure(0, weight=1)
 
-        # --- Video Control Buttons (left of video frame) ---
-        video_button_frame = tk.Frame(self.tab_main)
-        video_button_frame.place(relx=1.0, x=-340, y=25, anchor="ne")  # Centered vertically to preview
+        top = ttk.Frame(self.tab_main)
+        top.grid(row=0, column=0, sticky="ew", padx=pad, pady=(pad, gap))
+        top.grid_columnconfigure(0, weight=1)
+        top.grid_columnconfigure(1, weight=0)
 
-        # Toggle Lights Button
-        self.toggle_lights_button = tk.Button(video_button_frame, text="💡 Toggle Lights",
-                                             state=tk.DISABLED, command=self.toggle_lights, width=16)
-        self.toggle_lights_button.pack(fill="x", pady=(0, 130))
- 
-        # Stop Session Button (initially hidden)
-        self.stop_session_button = tk.Button(video_button_frame, text="⛔ Stop Session", fg="white", bg="red",
-                                             state=tk.DISABLED, command=self.run_stop_astro_photo, width=16)
+        left = ttk.Frame(top)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, gap))
+        left.grid_columnconfigure(0, weight=1)
 
-        self.stop_session_button.pack(fill="x")
+        setup_card, setup_inner = card(left)
+        setup_card.grid(row=0, column=0, sticky="ew")
+        self.labelConfig = section_header(setup_inner, "Configuration")
+        self.labelConfig.pack(anchor="w", pady=(0, 8))
+        Tooltip(self.labelConfig, "Tick the multiple checkbox if you have more than one Dwarf devices.")
 
-        # Optional tooltips
-        Tooltip(self.stop_session_button, "Stop the current session")
-        Tooltip(self.toggle_lights_button, "Toggle lights on/off")
-        
-       # Checkbox for "Multiple" and related widgets in a grid for alignment
-        multiple_frame = tk.Frame(self.tab_main)
-        multiple_frame.pack(anchor="w", padx=10, pady=5, fill="none")
-        multiple_frame.config(width=500)  # Limit width to prevent overlap with video preview
+        multiple_frame = ttk.Frame(setup_inner, style="Card.TFrame")
+        multiple_frame.pack(anchor="w", fill="x")
+        multiple_frame.grid_columnconfigure(2, weight=1)
+        multiple_frame._theme_role = "card"
 
         self.multiple_var = tk.BooleanVar(value=False)
-        self.multiple_checkbox = tk.Checkbutton(multiple_frame, text="Multiple", variable=self.multiple_var, command=self.toggle_multiple)
-        self.multiple_checkbox.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=8)
+        self.multiple_checkbox = ttk.Checkbutton(
+            multiple_frame, text="Multiple", variable=self.multiple_var, command=self.toggle_multiple
+        )
+        self.multiple_checkbox.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
 
-        self.combobox_label = tk.Label(multiple_frame, text="Current Config:")
+        self.combobox_label = ttk.Label(multiple_frame, text="Current Config:", style="Card.TLabel")
         self.combobox_label.grid(row=0, column=1, sticky="e", padx=(0, 4), pady=2)
         self.config_combobox = ttk.Combobox(multiple_frame, state="readonly", width=27)
         self.config_combobox["values"] = (CONFIG_DEFAULT)
         self.config_combobox.set(CONFIG_DEFAULT)
-        self.config_combobox.grid(row=0, column=2, sticky="w", padx=(0, 8), pady=2)
+        self.config_combobox.grid(row=0, column=2, sticky="ew", padx=(0, 8), pady=2)
 
-        self.entry_label = tk.Label(multiple_frame, text="New Config:")
+        self.entry_label = ttk.Label(multiple_frame, text="New Config:", style="Card.TLabel")
         self.entry_label.grid(row=1, column=1, sticky="e", padx=(0, 4), pady=2)
-        
-        # Create a sub-frame to hold entry and button together
-        self.entry_button_frame = tk.Frame(multiple_frame)
-        self.entry_button_frame.grid(row=1, column=2, sticky="w", padx=(0, 0), pady=2)
-        
-        self.config_entry = tk.Entry(self.entry_button_frame, width=20)
-        self.config_entry.pack(side="left", padx=(0, 2))
-        self.add_button = tk.Button(self.entry_button_frame, text="Add", command=self.add_config)
-        self.add_button.pack(side="left", padx=(2, 0))
 
-        # Make columns expand as needed
-        for col in range(3):
-            multiple_frame.grid_columnconfigure(col, weight=0)
+        self.entry_button_frame = ttk.Frame(multiple_frame, style="Card.TFrame")
+        self.entry_button_frame.grid(row=1, column=2, sticky="w", pady=2)
+        self.entry_button_frame._theme_role = "card"
 
-        # Initialize with widgets hidden (non-multiple mode)
+        self.config_entry = ttk.Entry(self.entry_button_frame, width=20)
+        self.config_entry.pack(side="left", padx=(0, 6))
+        self.add_button = ttk.Button(self.entry_button_frame, text="Add", command=self.add_config)
+        self.add_button.pack(side="left")
+
         self.toggle_multiple()
         self.config_combobox.bind("<<ComboboxSelected>>", self.on_combobox_change)
 
-        # Tooltip for Multiple Configuration connection prompt
-        Tooltip(self.labelConfig, "Tick the multiple checkox if you have more than one Dwarf devices.")
+        self.label1 = section_header(setup_inner, "Dwarf connection")
+        self.label1.pack(anchor="w", pady=(16, 8))
 
-        # Bluetooth connection prompt label
-        self.label1 = tk.Label(self.tab_main, text="Dwarf connection", font=("Arial", 12))
-        self.label1.pack(anchor="w", padx=10, pady=5)
-
-        # Checkbox to toggle between Bluetooth commands
         self.use_web = tk.BooleanVar(value=False)
-        self.checkbox_commandBluetooth = tk.Checkbutton(
-            self.tab_main,
+        self.checkbox_commandBluetooth = ttk.Checkbutton(
+            setup_inner,
             text="Use Web Browser for Bluetooth",
-            variable=self.use_web
+            variable=self.use_web,
         )
-        self.checkbox_commandBluetooth.pack(anchor="w", padx=10, pady=5)
+        self.checkbox_commandBluetooth.pack(anchor="w", pady=(0, 8))
+        Tooltip(
+            self.checkbox_commandBluetooth,
+            "Use the direct Bluetooth function if unchecked.\nUse the web browser for Bluetooth if checked.",
+        )
 
-        # Add tooltip to the checkbox
-        Tooltip(self.checkbox_commandBluetooth, "Use the direct Bluetooth function if unchecked.\nUse the web browser for Bluetooth if checked.")
-
-        # Tooltip for Bluetooth connection prompt
-        self.label2 = tk.Label(self.tab_main, text="Do you want to start the Bluetooth connection?", font=("Arial", 10))
-        self.label2.pack(anchor="w", padx=10, pady=5)
+        self.label2 = hint_label(setup_inner, "Do you want to start the Bluetooth connection?")
+        self.label2.pack(anchor="w", pady=(0, 8))
         Tooltip(self.label2, "Select Yes to launch the command for Bluetooth connection or No to skip the connection.")
 
-        # Frame for Bluetooth connection buttons
-        bluetooth_frame = tk.Frame(self.tab_main)
-        bluetooth_frame.pack(anchor="w", padx=10, pady=5)
-        
-        self.button_yes = tk.Button(bluetooth_frame, text="Yes", command=self.start_bluetooth, width=10)
-        self.button_yes.grid(row=0, column=0, padx=5)
-        
-        self.button_no = tk.Button(bluetooth_frame, text="No", command=self.skip_bluetooth, width=10)
-        self.button_no.grid(row=0, column=1, padx=5)
-        
-        # Frame for Start/Stop Scheduler buttons
-        scheduler_header_frame = tk.Frame(self.tab_main)
-        scheduler_header_frame.pack(anchor="w", padx=10, pady=(5, 2), fill="x")
+        bluetooth_frame = ttk.Frame(setup_inner, style="Card.TFrame")
+        bluetooth_frame.pack(anchor="w")
+        self.button_yes = ttk.Button(bluetooth_frame, text="Yes", command=self.start_bluetooth, style="Accent.TButton", width=10)
+        self.button_yes.grid(row=0, column=0, padx=(0, 6))
+        self.button_no = ttk.Button(bluetooth_frame, text="No", command=self.skip_bluetooth, width=10)
+        self.button_no.grid(row=0, column=1)
 
-        self.label3 = tk.Label(scheduler_header_frame, text="Scheduler", font=("Arial", 12))
+        preview_w = 320
+        preview_h = int(preview_w / VIDEO_ASPECT)
+
+        video_card, video_inner = card(top)
+        video_card.grid(row=0, column=1, sticky="nsew")
+
+        self.stop_session_button = ttk.Button(
+            video_inner, text="Stop Session", style="Danger.TButton",
+            state=tk.DISABLED, command=self.run_stop_astro_photo
+        )
+        self.stop_session_button.pack(fill="x", side="bottom")
+        self.toggle_lights_button = ttk.Button(
+            video_inner, text="Toggle Lights", state=tk.DISABLED, command=self.toggle_lights
+        )
+        self.toggle_lights_button.pack(fill="x", side="bottom", pady=(0, 6))
+        Tooltip(self.stop_session_button, "Stop the current session")
+        Tooltip(self.toggle_lights_button, "Toggle lights on/off")
+
+        section_header(video_inner, "Live Preview").pack(anchor="w", pady=(0, 8))
+
+        self._preview_stage = tk.Frame(
+            video_inner, bg=palette["video_bg"], highlightthickness=0, bd=0,
+            width=preview_w, height=preview_h,
+        )
+        self._preview_stage.pack(anchor="w")
+        self._preview_stage.pack_propagate(False)
+        self._preview_stage._theme_role = "video"
+
+        self.video_canvas = tk.Label(
+            self._preview_stage,
+            text="Video stream is off",
+            bg=palette["video_bg"],
+            fg=palette["muted"],
+            font=fonts["body"],
+            justify="center",
+            anchor="center",
+        )
+        self.video_canvas._theme_role = "video"
+        self.video_canvas.pack(fill="both", expand=True)
+        self.video_canvas.bind("<Button-1>", self.toggle_video_stream)
+        self.video_canvas.bind("<Double-Button-1>", self.open_video_stream_in_browser)
+        self.video_canvas.config(cursor="hand2")
+        Tooltip(self.video_canvas, "Single click: Toggle video stream\nDouble click: Open stream in browser")
+        self._stop_video_stream = True
+
+        hint_label(video_inner, "Click to start the stream").pack(anchor="w", pady=(6, 0))
+        ttk.Frame(video_inner, style="Card.TFrame").pack(fill="both", expand=True)
+
+        sched_card, sched_inner = card(left)
+        sched_card.grid(row=1, column=0, sticky="ew", pady=(gap, 0))
+        scheduler_header_frame = ttk.Frame(sched_inner, style="Card.TFrame")
+        scheduler_header_frame.pack(anchor="w", fill="x", pady=(0, 8))
+        scheduler_header_frame._theme_role = "card"
+
+        self.label3 = section_header(scheduler_header_frame, "Scheduler")
         self.label3.pack(side="left", anchor="w")
 
-        # Add session information label to the right of the Scheduler heading
-        self.session_info_label = tk.Label(scheduler_header_frame, text="", font=("Arial", 10), fg="blue")
-        self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))  # 20px left padding for spacing
-        self.session_info_label.pack_forget()  # Hide it initially
+        self.session_info_label = ScrollingLabel(
+            scheduler_header_frame, text="", font=fonts["body"], fg=palette["accent"], bg=palette["card"]
+        )
+        self.session_info_label._theme_keep_fg = True
+        self.session_info_label._theme_role = "card"
+        self.session_info_label.pack(side="left", fill="x", expand=True, padx=(16, 0))
 
-        scheduler_frame = tk.Frame(self.tab_main)
-        scheduler_frame.pack(anchor="w", padx=10, pady=(10, 2), fill="x")
+        scheduler_frame = ttk.Frame(sched_inner, style="Card.TFrame")
+        scheduler_frame.pack(anchor="w", fill="x")
+        for col in range(4):
+            scheduler_frame.grid_columnconfigure(col, weight=1, uniform="sched")
 
-        # Configure columns to expand equally (updated to 7 columns to include Auto Focus)
-        for i in range(7):
-            scheduler_frame.grid_columnconfigure(i, weight=1)
-
-        self.scheduler_button = tk.Button(scheduler_frame, text="Start Scheduler", command=self.toggle_scheduler, state=tk.DISABLED, width=16)
-        self.scheduler_button.grid(row=0, column=0, padx=2, sticky="sew")
-
-        self.unlock_button = tk.Button(scheduler_frame, text="Unset as Host", command=self.unset_lock_device, state=tk.DISABLED, width=16)
-        self.unlock_button.grid(row=0, column=1, padx=2, sticky="sew")
-
-        self.calibrate_button = tk.Button(scheduler_frame, text="Calibrate", command=self.start_calibration, state=tk.DISABLED, width=16)
-        self.calibrate_button.grid(row=0, column=2, padx=2, sticky="sew")
-
-        self.autofocus_button = tk.Button(scheduler_frame, text="Auto Focus", command=self.start_auto_focus_button, state=tk.DISABLED, width=16)
-        self.autofocus_button.grid(row=0, column=3, padx=2, sticky="sew")
-
-        self.polar_button = tk.Button(scheduler_frame, text="Polar Position", command=self.start_polar_position, state=tk.DISABLED, width=16)
-        self.polar_button.grid(row=0, column=4, padx=2, sticky="sew")
-
-        self.eq_button = tk.Button(scheduler_frame, text="EQ Solving", command=self.start_eq_solving, state=tk.DISABLED, width=16)
-        self.eq_button.grid(row=0, column=5, padx=2, sticky="sew")
-
-        # Power Down button (enabled if API supports power down functionality)
-        self.powerdown_button = tk.Button(scheduler_frame, text="Power Down", command=self.start_powerdown, state=tk.DISABLED, width=16)
-        self.powerdown_button.grid(row=0, column=6, padx=2, sticky="sew")
-
-        # Reboot button (enabled if API supports reboot functionality)
-        self.reboot_button = tk.Button(scheduler_frame, text="Reboot", command=self.start_reboot, state=tk.DISABLED, width=16)
-        self.reboot_button.grid(row=0, column=6, padx=2, sticky="sew")
+        self.scheduler_button = ttk.Button(
+            scheduler_frame, text="Start Scheduler", command=self.toggle_scheduler,
+            state=tk.DISABLED, style="CompactAccent.TButton",
+        )
+        self.unlock_button = ttk.Button(
+            scheduler_frame, text="Unset as Host", command=self.unset_lock_device,
+            state=tk.DISABLED, style="Compact.TButton",
+        )
+        self.calibrate_button = ttk.Button(
+            scheduler_frame, text="Calibrate", command=self.start_calibration,
+            state=tk.DISABLED, style="Compact.TButton",
+        )
+        self.autofocus_button = ttk.Button(
+            scheduler_frame, text="Auto Focus", command=self.start_auto_focus_button,
+            state=tk.DISABLED, style="Compact.TButton",
+        )
+        self.polar_button = ttk.Button(
+            scheduler_frame, text="Polar Position", command=self.start_polar_position,
+            state=tk.DISABLED, style="Compact.TButton",
+        )
+        self.eq_button = ttk.Button(
+            scheduler_frame, text="EQ Solving", command=self.start_eq_solving,
+            state=tk.DISABLED, style="Compact.TButton",
+        )
+        self.powerdown_button = ttk.Button(
+            scheduler_frame, text="Power Down", command=self.start_powerdown,
+            state=tk.DISABLED, style="Compact.TButton",
+        )
+        self.reboot_button = ttk.Button(
+            scheduler_frame, text="Reboot", command=self.start_reboot,
+            state=tk.DISABLED, style="Compact.TButton",
+        )
+        for index, button in enumerate((
+            self.scheduler_button, self.unlock_button, self.calibrate_button, self.autofocus_button,
+            self.polar_button, self.eq_button, self.powerdown_button, self.reboot_button,
+        )):
+            button.grid(row=index // 4, column=index % 4, padx=2, pady=2, sticky="ew")
 
         self.status_powerlight = None
         self.status_rgblight = None
 
-        # Log text area with vertical scrollbar
-        emoji_font = ("Segoe UI Emoji", 10)
-        log_frame = tk.Frame(self.tab_main)
-        log_frame.pack(padx=10, pady=(10, 10), fill=tk.BOTH, expand=True)
+        log_card, log_inner = card(self.tab_main)
+        log_card.grid(row=1, column=0, sticky="nsew", padx=pad, pady=(0, gap))
+        log_inner.grid_rowconfigure(1, weight=1)
+        log_inner.grid_columnconfigure(0, weight=1)
+        section_header(log_inner, "Log").grid(row=0, column=0, sticky="w", pady=(0, 6))
 
-        self.log_text = tk.Text(log_frame, wrap=tk.WORD, height=15, font=emoji_font)
-        log_scrollbar = tk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        log_frame = ttk.Frame(log_inner, style="Card.TFrame")
+        log_frame.grid(row=1, column=0, sticky="nsew")
+        log_frame.grid_rowconfigure(0, weight=1)
+        log_frame.grid_columnconfigure(0, weight=1)
+
+        self.log_text = tk.Text(log_frame, wrap=tk.WORD, height=15, font=fonts["log"], relief="flat")
+        self.log_text._theme_role = "log"
+        log_scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_scrollbar.set)
-        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        log_scrollbar.grid(row=0, column=1, sticky="ns")
+        style_log_text(self.log_text)
 
-        # --- Astro Sessions file counts summary (one line, colored, correct count) ---
-        # Use colors from overview_session.py
-        folder_colors = {
-            'ToDo': 'blue',
-            'Current': 'purple',
-            'Done': 'green',
-            'Error': 'red',
-            'Results': 'gray',
-        }
-        from astro_dwarf_scheduler import LIST_ASTRO_DIR
-        sessions_dir = LIST_ASTRO_DIR['SESSIONS_DIR']
-        # Place file counts and clear log button in a horizontal frame just below the output window
-        bottom_frame = tk.Frame(self.tab_main)
-        bottom_frame.pack(fill="x", padx=10, pady=(0,10))
-        # File counts (left)
-        summary_frame = tk.Frame(bottom_frame)
+        status_card, status_inner = card(self.tab_main, padding=8)
+        status_card.grid(row=2, column=0, sticky="ew", padx=pad, pady=(0, pad))
+
+        folder_names = ["ToDo", "Current", "Done", "Error", "Results"]
+        sessions_dir = LIST_ASTRO_DIR["SESSIONS_DIR"]
+
+        summary_frame = ttk.Frame(status_inner, style="Card.TFrame")
         summary_frame.pack(side="left", anchor="w")
-        tk.Label(summary_frame, text="Astro Sessions", font=("Arial", 10)).pack(side="left")
+        ttk.Label(summary_frame, text="Astro Sessions", style="Subheading.TLabel").pack(side="left", padx=(0, 8))
         self.session_count_labels = {}
-        for folder, color in folder_colors.items():
+        for folder in folder_names:
             folder_path = os.path.join(sessions_dir, folder)
             try:
                 count = len([
                     f for f in os.listdir(folder_path)
-                    if os.path.isfile(os.path.join(folder_path, f)) and not f.startswith('.')
+                    if os.path.isfile(os.path.join(folder_path, f)) and not f.startswith(".")
                 ])
             except Exception:
                 count = 0
-            lbl = tk.Label(summary_frame, text=f" {folder}: {count}", fg=color, font=("Arial", 10))
+            lbl = status_label(summary_frame, folder, count)
             lbl.pack(side="left")
             self.session_count_labels[folder] = lbl
 
-        # Clear Log button (right)
-        clear_log_btn = tk.Button(bottom_frame, text="Clear Log", command=self.clear_log_output)
-        clear_log_btn.pack(side="right", padx=0)
+        clear_log_btn = ttk.Button(status_inner, text="Clear Log", command=self.clear_log_output)
+        clear_log_btn.pack(side="right")
 
-        # Skip Time Checks checkbox (right, next to clear log)
         self.skip_time_checks_var = tk.BooleanVar(value=self.skip_time_checks)
+
         def on_skip_time_checks_changed():
             self.skip_time_checks = self.skip_time_checks_var.get()
-        skip_time_checks_cb = tk.Checkbutton(bottom_frame, text="Skip Time Checks", variable=self.skip_time_checks_var, command=on_skip_time_checks_changed)
+
+        skip_time_checks_cb = ttk.Checkbutton(
+            status_inner,
+            text="Skip Time Checks",
+            variable=self.skip_time_checks_var,
+            command=on_skip_time_checks_changed,
+        )
         skip_time_checks_cb.pack(side="right", padx=10)
 
-        # Add a method to update the counts (can be called after file changes)
         def update_session_counts():
-            for folder, color in folder_colors.items():
+            for folder in folder_names:
                 folder_path = os.path.join(sessions_dir, folder)
                 try:
                     count = len([
                         f for f in os.listdir(folder_path)
-                        if os.path.isfile(os.path.join(folder_path, f)) and not f.startswith('.')
+                        if os.path.isfile(os.path.join(folder_path, f)) and not f.startswith(".")
                     ])
                 except Exception:
                     count = 0
-                self.session_count_labels[folder].config(text=f" {folder}: {count}")
+                self.session_count_labels[folder].config(text=f" {folder}: {count}", fg=status_color(folder))
+
         self.update_session_counts = update_session_counts
 
-        # --- Periodically update session counts every 10 seconds ---
         def periodic_update_counts():
             self.update_session_counts()
             self.after(10000, periodic_update_counts)
-        periodic_update_counts()
 
-        # Periodically update session information
+        periodic_update_counts()
         self.update_session_info()
 
     def clear_log_output(self):
@@ -1143,9 +1461,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.toggle_buttons(tk.DISABLED)
             self.log("Scheduler is stopped")
 
-        # Hide session info when scheduler stops
-        self.session_info_label.pack_forget()
-
         # Update file counts when scheduler stops
         if hasattr(self, 'update_session_counts'):
             self.update_session_counts()
@@ -1221,42 +1536,41 @@ class AstroDwarfSchedulerApp(tk.Tk):
             # User clicked "No" or closed dialog - do nothing
             self.log("Reboot cancelled by user.")
 
-    def run_stop_astro_photo(self, confirm = True):
-        if confirm : 
-            # Show confirmation dialog
+    def run_stop_astro_photo(self, confirm=True):
+        if confirm and not getattr(self, "session_running", False):
+            self.log("No session is running.", level="warning")
+            self._sync_stop_session_button()
+            return
+
+        if confirm:
             result = messagebox.askyesno(
-                "Confirm Stopping Astro Photo Session", 
-                "Are you sure you want to stop the Astro Session.",
-                icon="warning"
+                "Confirm Stopping Astro Photo Session",
+                "Are you sure you want to stop the current session?",
+                icon="warning",
             )
-        
-        if not confirm or result:  # User clicked "Yes" or Not necessary
-            # Only start if not already running and user confirmed
-            if not hasattr(self, 'stop_astro_photo') or not self.stop_astro_photo.is_alive():
-                self.stop_astro_photo = threading.Thread(target=perform_stopAstroPhoto, daemon=True)
+            if not result:
+                self.log("Stopping session cancelled by user.")
+                return
 
+        self.session_stop_event.set()
+        if not hasattr(self, "stop_astro_photo") or not self.stop_astro_photo.is_alive():
+            self.stop_astro_photo = threading.Thread(
+                target=self._stop_current_session, daemon=True
+            )
             self.stop_astro_photo.start()
-
-            # Wait for stop_astro_photo thread to stop, then wait additional 150 seconds
-            def wait_for_stop_photo_completion():
-                # Check if stop_astro_photo thread is still running
-                stop_photo_running = hasattr(self, 'stop_astro_photo') and self.stop_astro_photo.is_alive()
-
-                def finalize_stop():
-                    self.log("Astro Photo have fully stopped.")
-                    self.toggle_buttons(tk.DISABLED)    
-                    # Only enable the scheduler button so user can start again
-                    self.scheduler_button.config(state=tk.NORMAL, text="Start Scheduler")
-                    self.enable_controls()
-
-                if stop_photo_running:
-                    # Check again in 100ms if either thread is still running
-                    self.after(100, wait_for_stop_photo_completion)
-            wait_for_stop_photo_completion()
-
         else:
-            # User clicked "No" or closed dialog - do nothing
-            self.log("Stopping Astro Photos session cancelled by user.")
+            self.log("Session stop already in progress.")
+
+    def _stop_current_session(self):
+        self.log("Stopping current session...")
+        self.session_stop_event.set()
+        try:
+            if perform_stopAstroPhoto():
+                self.log("Stop capture command sent", level="success")
+            else:
+                self.log("Stop capture command failed or was skipped", level="warning")
+        except Exception as e:
+            self.log(f"Error stopping session: {e}", level="error")
 
     def toggle_lights(self):
         # Only start if not already running
@@ -1328,6 +1642,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                         # If no sessions were processed and scheduler is still running, continue checking
                         if not sessions_processed and self.scheduler_running and not self.scheduler_stop_event.is_set():
                             self.session_running = False  # No session is running
+                            self.after(0, self._sync_stop_session_button)
 
                             # Instead of sleeping for 10 seconds, check every 0.1s if stopped
                             total_sleep = 0
@@ -1405,7 +1720,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 result = start_polar_align()
                 if not result:
                     time.sleep(10)  # Sleep for 10 seconds between checks
-            setattr(self, '_stop_video_stream', True)
         except Exception as e:
             try:
                 read_longitude()
@@ -1413,8 +1727,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 self.log(f"Error during EQ Solving: {e}", level="error")
             except Exception as e:
                 self.log(f"Error: Missing Longitude/Latitude in settings", level="error")
-            finally:    
-                setattr(self, '_stop_video_stream', True)
 
     def run_start_polar_position(self):
         try:
@@ -1459,17 +1771,14 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 if not result:
                     time.sleep(10)  # Sleep for 10 seconds between checks
 
-            setattr(self, '_stop_video_stream', True)
-
         except Exception as e:
             self.log(f"Error in Polar Align positioning: {e}", level="error")
-            setattr(self, '_stop_video_stream', True)
 
     def start_auto_focus(self):
         try:
             self.log("Starting Auto Focus process...")
             setattr(self, '_stop_video_stream', False)
-            self.start_video_preview()
+            self.start_video_preview(ensure_live=False)
 
             continue_action = perform_time()
             verify_action(continue_action, "step_0")
@@ -1477,6 +1786,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
             # Go Live
             continue_action = perform_GoLive()
             verify_action(continue_action, "step_1a")
+            self.reconnect_video_preview()
 
             wait_after = 5
             wait_before = 5
@@ -1498,11 +1808,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
             time.sleep(wait_after)
             continue_action = perform_start_autofocus()
 
-            setattr(self, '_stop_video_stream', True)
-
         except Exception as e:
             self.log(f"Error in Auto Focus: {e}", level="error")
-            setattr(self, '_stop_video_stream', True)
 
     def run_start_calibration(self):
         try:
@@ -1510,7 +1817,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
             # Session initialization
             self.log("Starting Calibration process...")
             setattr(self, '_stop_video_stream', False)
-            self.start_video_preview()
+            self.start_video_preview(ensure_live=False)
 
             continue_action = perform_time()
             verify_action(continue_action, "step_0")
@@ -1518,6 +1825,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
             # Go Live
             continue_action = perform_GoLive()
             verify_action(continue_action, "step_1a")
+            self.reconnect_video_preview()
 
             wait_after = 5
             wait_before = 5
@@ -1537,11 +1845,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
             continue_action = perform_stop_goto()
             self.log(f"Waiting for {wait_after} seconds")
 
-            setattr(self, '_stop_video_stream', True)
-
         except Exception as e:
             self.log(f"Error in Calibration: {e}", level="error")
-            setattr(self, '_stop_video_stream', True)
 
     def run_stop_astrophotos(self):
         try:
@@ -1639,27 +1944,25 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.text_handler = None  # Clear the reference to avoid reuse
 
     def log(self, message, level="info"):
-        # Add color and emoji for direct log calls
         if level == "error":
-            color = 'red'
-            emoji = '✗ '
+            tag = "error"
+            emoji = "✗ "
         elif level == "warning":
-            color = 'orange'
-            emoji = '⚠ '
+            tag = "warning"
+            emoji = "⚠ "
         elif level == "info":
-            color = 'blue'
-            emoji = '◉ '
+            tag = "info"
+            emoji = "◉ "
         elif level == "success":
-            color = 'green'
-            emoji = '✓ '
+            tag = "success"
+            emoji = "✓ "
         else:
-            color = 'black'
-            emoji = '⇒ '
-            
+            tag = "default"
+            emoji = "⇒ "
+
         if self.log_text is not None:
             self.log_text.config(state=tk.NORMAL)
-            self.log_text.insert(tk.END, emoji + message + "\n", color)
-            self.log_text.tag_config(color, foreground=color)
+            self.log_text.insert(tk.END, emoji + message + "\n", tag)
             self.log_text.see(tk.END)
 
     def update_session_info(self):
@@ -1667,6 +1970,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         Update the session information label with the next session's start time,
         the runtime of the current session, or a countdown to the next session.
         """
+        self._sync_stop_session_button()
         # Only update session_info_label if we're running in a GUI context
         has_gui = hasattr(self, 'session_info_label') and self.session_info_label is not None
         
@@ -1680,10 +1984,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 has_gui = False
         
         if self.scheduler_running and self.session_running:
-            # Show the session info label
-            if has_gui:
-                self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))
-
             # Check for the next session in the ToDo directory
             todo_dir_var = "CURRENT_DIR" if getattr(self, 'session_running', False) else "TODO_DIR"
             todo_dir = LIST_ASTRO_DIR[todo_dir_var]
@@ -1721,7 +2021,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                         self.last_text=f"Session runtime: {this_session_runtime_str} / {estimated_runtime} - Total runtime: {total_runtime_str}"
                         if has_gui:
                             try:
-                                self.session_info_label.config(text=self.last_text, fg="#26447A")
+                                self.session_info_label.config(text=self.last_text, fg=palette["runtime"])
                             except tk.TclError as e:
                                 print(f"Error updating session_info_label: {e}")
                                 has_gui = False
@@ -1736,23 +2036,11 @@ class AstroDwarfSchedulerApp(tk.Tk):
             else:
                 if has_gui:
                     try:
-                        self.session_info_label.config(text="No session directory found - Check configuration",fg="red")
+                        self.session_info_label.config(text="No session directory found - Check configuration", fg=palette["status_error"])
                     except tk.TclError as e:
                         print(f"Error updating session_info_label: {e}")
                         has_gui = False
         else:
-            # Show a helpful placeholder when scheduler is not running
-            if has_gui:
-                try:
-                    # Check if widget still exists and is valid before packing
-                    if (hasattr(self, 'session_info_label') and 
-                        self.session_info_label is not None and 
-                        self.session_info_label.winfo_exists()):
-                        self.session_info_label.pack(side="left", anchor="w", padx=(20, 0))
-                except (tk.TclError, AttributeError) as e:
-                    print(f"Error packing session_info_label: {e}")
-                    has_gui = False  # Disable further GUI operations
-            
             # Check if there are any sessions in ToDo to provide useful information
             todo_dir = LIST_ASTRO_DIR["TODO_DIR"]
             if os.path.exists(todo_dir):
@@ -1788,7 +2076,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                             try:
                                 self.session_info_label.config(
                                     text=f"Up next: {scheduled_target} - {countdown_str} at {scheduled_date} {scheduled_time}",
-                                    fg="#0078d7"
+                                    fg=palette["countdown"]
                                 )
                             except tk.TclError as e:
                                 print(f"Error updating session_info_label: {e}")
@@ -1798,7 +2086,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                             try:
                                 self.session_info_label.config(
                                     text=f"Ready to start - {len(todo_files)} session(s) waiting. Click 'Start Scheduler' to begin.",
-                                    fg="green"
+                                    fg=palette["status_done"]
                                 )
                             except tk.TclError as e:
                                 print(f"Error updating session_info_label: {e}")
@@ -1808,7 +2096,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                         try:
                             self.session_info_label.config(
                                 text="No sessions scheduled - Create sessions in 'Create Session' tab to get started.",
-                                fg="purple"
+                                fg=palette["status_current"]
                             )
                         except tk.TclError as e:
                             print(f"Error updating session_info_label: {e}")
@@ -1818,7 +2106,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     try:
                         self.session_info_label.config(
                             text="Session directory not found - Check your configuration settings.",
-                            fg="red"
+                            fg=palette["status_error"]
                         )
                     except tk.TclError as e:
                         print(f"Error updating session_info_label: {e}")
