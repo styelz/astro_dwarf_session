@@ -669,23 +669,27 @@ jobs:
           echo "Files in workspace:"
           ls -la /home/runner/work/astro_dwarf_session/astro_dwarf_session/
 
-      - name: Create version tag
+      - name: Replace existing tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
+          set -euo pipefail
           VERSION="${APP_VERSION}"
+          TAG="v${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --tags --force
 
-          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
-            echo "Tag v${VERSION} exists. Deleting and recreating at current commit..."
-            git tag -d "v${VERSION}" || true
-            git push --delete origin "v${VERSION}" || true
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Deleting existing GitHub release $TAG so this build can replace it..."
+            gh release delete "$TAG" --yes --cleanup-tag
           fi
 
-          git tag "v${VERSION}" "${GITHUB_SHA}"
-          git push origin "v${VERSION}"
-          echo "Successfully created and pushed tag v${VERSION}"
+          git tag -d "$TAG" || true
+          git push origin ":refs/tags/${TAG}" || true
+          git tag -f "$TAG" "${GITHUB_SHA}"
+          git push origin "refs/tags/${TAG}" --force
+          echo "Tag $TAG now points to ${GITHUB_SHA}"
 
       - name: Create GitHub Release
         id: release
@@ -697,6 +701,9 @@ jobs:
           allowUpdates: true
           removeArtifacts: true
           replacesArtifacts: true
+          makeLatest: true
+          skipIfReleaseExists: false
+          commit: ${{ github.sha }}
           tag: v${{ needs.setup.outputs.version }}
           name: "Release v${{ needs.setup.outputs.version }}"
           body: |

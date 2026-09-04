@@ -15,7 +15,12 @@ from tkinter import messagebox, ttk
 from astro_dwarf_scheduler import check_and_execute_commands, start_connection, start_STA_connection, setup_new_config
 from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto, perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, perform_set_preview_quality, unset_HostMaster, set_HostMaster, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown, perform_reboot
 from dwarf_python_api.lib.dwarf_utils import perform_powerOpenRGB, perform_powerCloseRGB, perform_powerIndOn, perform_powerIndOff
-from dwarf_python_api.lib.websockets_utils import get_client_status, request_command_interrupt
+from dwarf_python_api.lib.websockets_utils import get_client_status
+try:
+    from dwarf_python_api.lib.websockets_utils import request_command_interrupt
+except ImportError:
+    def request_command_interrupt():
+        return None
 from astro_dwarf_scheduler import LIST_ASTRO_DIR, get_json_files_sorted
 
 # import data for config.py
@@ -1636,6 +1641,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.session_stop_event.set()
         try:
             request_command_interrupt()
+            perform_stopAstroPhoto()
+            perform_stop_goto()
             self.log("Stop requested; waiting for the session to finish...")
         except Exception as e:
             self.log(f"Error requesting session stop: {e}", level="error")

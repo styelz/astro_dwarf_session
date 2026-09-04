@@ -118,13 +118,17 @@ class SessionCancelled(Exception):
 def _stop_captures_best_effort():
     """Stop tele/wide capture if one is actually running, without racing an in-flight wait."""
     try:
-        from dwarf_python_api.lib.websockets_utils import (
-            get_client_status,
-            clear_command_interrupt,
-            flush_pending_results,
-        )
-        clear_command_interrupt()
-        flush_pending_results()
+        from dwarf_python_api.lib.websockets_utils import get_client_status
+        try:
+            from dwarf_python_api.lib.websockets_utils import clear_command_interrupt
+            clear_command_interrupt()
+        except ImportError:
+            pass
+        try:
+            from dwarf_python_api.lib.websockets_utils import flush_pending_results
+            flush_pending_results()
+        except ImportError:
+            pass
         status = get_client_status()
         if isinstance(status, str):
             try:
@@ -140,6 +144,10 @@ def _stop_captures_best_effort():
             perform_stopAstroWidePhoto()
     except Exception as e:
         log.debug(f"Best-effort stop capture after cancel failed: {e}")
+        try:
+            perform_stopAstroPhoto()
+        except Exception:
+            pass
 
 
 def try_attemps (function, function_succeed_message, max_attempts = 3, interrupted=lambda: False):

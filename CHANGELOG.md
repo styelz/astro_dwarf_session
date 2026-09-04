@@ -18,8 +18,12 @@
 - **Live preview**: Video preview stays in sync while sessions are running.
 - **Device IDs**: Dwarf ID checks updated for current device support.
 
+### Bug Fixes
+- **Windows installer launch**: The GUI no longer fails to start with `ImportError: cannot import name 'request_command_interrupt'` when the bundled `dwarf_python_api` does not provide that helper.
+
 ### Packaging
 - **Single version source**: Apps, Windows installer, and GitHub releases now share one version from `CHANGELOG.md` (or `APP_VERSION`).
+- **Same-version rebuilds**: Re-running the GitHub Action for an existing version replaces that GitHub release and tag.
 
 ## [1.7.6] - 2025-10-15
 
