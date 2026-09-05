@@ -1,6 +1,7 @@
 """Shared Tkinter/ttk theme for Astro Dwarf Scheduler."""
 
 import configparser
+import ctypes
 import os
 import sys
 import tkinter as tk
@@ -23,78 +24,115 @@ FONT_SIZE_RANGES = {
 
 PALETTES = {
     "dark": {
-        "bg": "#1B1F2A",
-        "card": "#252A38",
-        "card_raised": "#2C3244",
-        "border": "#3A4154",
-        "fg": "#E8ECF4",
-        "muted": "#9AA3B5",
-        "input_bg": "#1F2433",
-        "input_fg": "#E8ECF4",
+        "bg": "#1D1D1B",
+        "card": "#292927",
+        "card_raised": "#31312F",
+        "border": "#484846",
+        "fg": "#E8E8E4",
+        "muted": "#A4A49C",
+        "input_bg": "#222220",
+        "input_fg": "#E8E8E4",
         "select_bg": "#6EA8FE",
-        "select_fg": "#0B1220",
+        "select_fg": "#121211",
         "accent": "#6EA8FE",
-        "accent_fg": "#0B1220",
-        "button_bg": "#32384A",
-        "button_active": "#3D4458",
+        "accent_fg": "#121211",
+        "button_bg": "#353533",
+        "button_active": "#40403E",
         "danger": "#E35D6A",
         "danger_fg": "#FFFFFF",
-        "video_bg": "#141824",
-        "tooltip_bg": "#2C3244",
-        "tooltip_fg": "#E8ECF4",
+        "video_bg": "#151513",
+        "tooltip_bg": "#31312F",
+        "tooltip_fg": "#E8E8E4",
         "log_error": "#E35D6A",
         "log_warning": "#E8A54B",
         "log_info": "#6EA8FE",
         "log_success": "#5DCA88",
-        "log_default": "#E8ECF4",
+        "log_default": "#E8E8E4",
         "status_todo": "#6EA8FE",
         "status_current": "#C084FC",
         "status_done": "#5DCA88",
         "status_error": "#E35D6A",
-        "status_results": "#9AA3B5",
-        "status_main": "#E8ECF4",
+        "status_results": "#A4A49C",
+        "status_main": "#E8E8E4",
         "link": "#6EA8FE",
-        "runtime": "#8BB4FF",
+        "runtime": "#C5C5C0",
         "countdown": "#6EA8FE",
-        "row_alt": "#161A24",
-        "tree_heading": "#2C3244",
+        "row_alt": "#181816",
+        "tree_heading": "#31312F",
     },
     "light": {
-        "bg": "#C5CAD3",
-        "card": "#D8DCE3",
-        "card_raised": "#E0E3E9",
-        "border": "#A8AFBB",
-        "fg": "#1B2333",
-        "muted": "#4A5363",
-        "input_bg": "#E6E9EE",
-        "input_fg": "#1B2333",
+        "bg": "#C9C8C4",
+        "card": "#DBDAD6",
+        "card_raised": "#E4E3DF",
+        "border": "#B0AFA9",
+        "fg": "#1E1E1C",
+        "muted": "#5C5B57",
+        "input_bg": "#EBEAE6",
+        "input_fg": "#1E1E1C",
         "select_bg": "#3B6FE0",
         "select_fg": "#FFFFFF",
         "accent": "#3B6FE0",
         "accent_fg": "#FFFFFF",
-        "button_bg": "#C8CDD6",
-        "button_active": "#B4BAC6",
+        "button_bg": "#CECDC9",
+        "button_active": "#B9B8B4",
         "danger": "#C0392B",
         "danger_fg": "#FFFFFF",
-        "video_bg": "#B4BAC6",
-        "tooltip_bg": "#2A3140",
-        "tooltip_fg": "#E8ECF4",
+        "video_bg": "#B6B5B1",
+        "tooltip_bg": "#2A2A28",
+        "tooltip_fg": "#E8E8E4",
         "log_error": "#C0392B",
         "log_warning": "#A86A10",
         "log_info": "#2F5FC4",
         "log_success": "#1E8A4C",
-        "log_default": "#1B2333",
+        "log_default": "#1E1E1C",
         "status_todo": "#2F6FED",
         "status_current": "#7C3AED",
         "status_done": "#1E8A4C",
         "status_error": "#C0392B",
-        "status_results": "#4A5363",
-        "status_main": "#1B2333",
+        "status_results": "#5C5B57",
+        "status_main": "#1E1E1C",
         "link": "#2F5FC4",
-        "runtime": "#26447A",
+        "runtime": "#3A3A38",
         "countdown": "#0078D7",
-        "row_alt": "#CED3DB",
-        "tree_heading": "#C8CDD6",
+        "row_alt": "#D1D0CC",
+        "tree_heading": "#CECDC9",
+    },
+    "redlight": {
+        "bg": "#0A0000",
+        "card": "#140000",
+        "card_raised": "#1C0000",
+        "border": "#6B0000",
+        "fg": "#C20000",
+        "muted": "#7A0000",
+        "input_bg": "#100000",
+        "input_fg": "#C20000",
+        "select_bg": "#7A0000",
+        "select_fg": "#E00000",
+        "accent": "#9B0000",
+        "accent_fg": "#0A0000",
+        "button_bg": "#220000",
+        "button_active": "#330000",
+        "danger": "#B00000",
+        "danger_fg": "#0A0000",
+        "video_bg": "#050000",
+        "tooltip_bg": "#1C0000",
+        "tooltip_fg": "#C20000",
+        "log_error": "#D00000",
+        "log_warning": "#A00000",
+        "log_info": "#9B0000",
+        "log_success": "#700000",
+        "log_default": "#C20000",
+        "status_todo": "#9B0000",
+        "status_current": "#C20000",
+        "status_done": "#700000",
+        "status_error": "#D00000",
+        "status_results": "#7A0000",
+        "status_main": "#C20000",
+        "link": "#C20000",
+        "runtime": "#A00000",
+        "countdown": "#9B0000",
+        "row_alt": "#080000",
+        "tree_heading": "#1C0000",
     },
 }
 
@@ -161,7 +199,60 @@ def save_appearance(appearance):
     """Persist appearance in the default config.ini [UI] section."""
     if appearance not in PALETTES:
         appearance = DEFAULT_MODE
-    _write_ui_values(appearance=appearance)
+    values = {"appearance": appearance}
+    if appearance in ("dark", "light"):
+        values["day_appearance"] = appearance
+    _write_ui_values(**values)
+
+
+def load_day_appearance():
+    """Last light/dark theme, used when leaving Redlight."""
+    value = _ui_config().get("UI", "day_appearance", fallback="").strip().lower()
+    if value in ("dark", "light"):
+        return value
+    current = load_appearance()
+    return current if current in ("dark", "light") else DEFAULT_MODE
+
+
+APPEARANCE_ORDER = ("dark", "light", "redlight")
+
+
+def next_appearance():
+    """Cycle Dark → Light → Redlight → Dark."""
+    current = load_appearance()
+    try:
+        index = APPEARANCE_ORDER.index(current)
+    except ValueError:
+        index = 0
+    return APPEARANCE_ORDER[(index + 1) % len(APPEARANCE_ORDER)]
+
+
+def apply_ui_appearance(root, appearance):
+    """Save, apply, and refresh window chrome after a theme change."""
+    if appearance not in PALETTES:
+        appearance = DEFAULT_MODE
+    save_appearance(appearance)
+    apply_theme(root, appearance)
+    if hasattr(root, "_apply_custom_chrome"):
+        root._apply_custom_chrome()
+    if hasattr(root, "overview_refresh") and callable(root.overview_refresh):
+        try:
+            root.overview_refresh()
+        except tk.TclError:
+            pass
+    if hasattr(root, "update_session_counts") and callable(root.update_session_counts):
+        try:
+            root.update_session_counts()
+        except tk.TclError:
+            pass
+    var = getattr(root, "appearance_var", None)
+    if var is not None and var.get() != appearance:
+        root._syncing_appearance = True
+        try:
+            var.set(appearance)
+        finally:
+            root._syncing_appearance = False
+    return appearance
 
 
 def _clamp_font_size(value, role):
@@ -480,6 +571,15 @@ def apply_theme(root, appearance=None):
         darkcolor=p["bg"],
         bordercolor=p["bg"],
     )
+    style.configure(
+        "TNotebook.Tab",
+        background=p["bg"],
+        foreground=p["fg"],
+        lightcolor=p["bg"],
+        darkcolor=p["bg"],
+        bordercolor=p["bg"],
+        padding=0,
+    )
 
     style.configure(
         "TScrollbar",
@@ -568,7 +668,156 @@ def apply_theme(root, appearance=None):
 
     _walk_tk_widgets(root)
     _install_input_selection_behavior(root)
+    apply_native_frame_colors(root, appearance)
+    try:
+        if root.winfo_class() == "Toplevel":
+            root.after_idle(lambda w=root, a=appearance: theme_window_frame(w, a))
+    except tk.TclError:
+        pass
     return palette
+
+
+def _colorref(hex_color):
+    value = (hex_color or "#000000").lstrip("#")
+    if len(value) != 6:
+        value = "000000"
+    red = int(value[0:2], 16)
+    green = int(value[2:4], 16)
+    blue = int(value[4:6], 16)
+    return red | (green << 8) | (blue << 16)
+
+
+def win32_hwnd(window):
+    """Outer Win32 HWND for a Tk window, or 0 when unavailable."""
+    if sys.platform != "win32":
+        return 0
+    try:
+        inner = int(window.winfo_id())
+    except (tk.TclError, TypeError, ValueError):
+        return 0
+    user32 = ctypes.windll.user32
+    try:
+        root_hwnd = user32.GetAncestor(inner, 2)  # GA_ROOT
+        if root_hwnd:
+            return root_hwnd
+    except Exception:
+        pass
+    try:
+        parent = user32.GetParent(inner)
+    except Exception:
+        parent = 0
+    return parent or inner
+
+
+class _WinMargins(ctypes.Structure):
+    _fields_ = [
+        ("cxLeftWidth", ctypes.c_int),
+        ("cxRightWidth", ctypes.c_int),
+        ("cyTopHeight", ctypes.c_int),
+        ("cyBottomHeight", ctypes.c_int),
+    ]
+
+
+def apply_native_frame_colors(window, appearance=None):
+    """Match the Windows caption/border remnant to the current theme.
+
+    After the native title bar is removed, DWM still paints a 1px top strip
+    using the default light caption color. That strip is invisible in light
+    mode and shows up as a light sliver in dark mode unless it is recolored.
+    """
+    if sys.platform != "win32":
+        return
+    if appearance is None:
+        appearance = mode
+    hwnd = win32_hwnd(window)
+    if not hwnd:
+        return
+    try:
+        dwm = ctypes.windll.dwmapi
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+    except Exception:
+        return
+
+    frame = palette.get("card", "#1B1F2A")
+    dark = ctypes.c_int(0 if appearance == "light" else 1)
+    for attribute in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE
+        try:
+            dwm.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(dark), ctypes.sizeof(dark))
+        except Exception:
+            pass
+
+    caption = ctypes.c_int(_colorref(frame))
+    border = ctypes.c_int(_colorref(palette.get("border", frame)))
+    text = ctypes.c_int(_colorref(palette.get("fg", "#E8ECF4")))
+    try:
+        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(caption), ctypes.sizeof(caption))  # DWMWA_CAPTION_COLOR
+        dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), ctypes.sizeof(border))  # DWMWA_BORDER_COLOR
+        dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text), ctypes.sizeof(text))  # DWMWA_TEXT_COLOR
+    except Exception:
+        pass
+
+    try:
+        margins = _WinMargins(0, 0, 0, 0)
+        dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+    except Exception:
+        pass
+
+    try:
+        brush = gdi32.CreateSolidBrush(_colorref(frame))
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            user32.SetClassLongPtrW(hwnd, -10, brush)  # GCLP_HBRBACKGROUND
+        else:
+            user32.SetClassLongW(hwnd, -10, brush)
+        previous = getattr(window, "_frame_brush", None)
+        window._frame_brush = brush
+        if previous:
+            gdi32.DeleteObject(previous)
+    except Exception:
+        pass
+
+    try:
+        user32.RedrawWindow(hwnd, None, None, 0x0401)
+    except Exception:
+        pass
+
+
+def theme_window_frame(window, appearance=None):
+    """Color a dialog's Tk highlight and Windows frame to the active palette."""
+    if appearance is None:
+        appearance = mode
+    p = palette
+    for option, value in (
+        ("bg", p["bg"]),
+        ("highlightthickness", 1),
+        ("highlightbackground", p["border"]),
+        ("highlightcolor", p["border"]),
+        ("bd", 0),
+        ("relief", "flat"),
+    ):
+        try:
+            window.configure(**{option: value})
+        except tk.TclError:
+            pass
+    apply_native_frame_colors(window, appearance)
+    if sys.platform != "win32":
+        return
+    hwnd = win32_hwnd(window)
+    if not hwnd:
+        return
+    try:
+        user32 = ctypes.windll.user32
+        gwl_exstyle = -20
+        ws_ex_clientedge = 0x00000200
+        ws_ex_staticedge = 0x00020000
+        style = user32.GetWindowLongW(hwnd, gwl_exstyle)
+        new_style = style & ~ws_ex_clientedge & ~ws_ex_staticedge
+        if new_style != style:
+            user32.SetWindowLongW(hwnd, gwl_exstyle, new_style)
+            user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0027)  # SWP_NOMOVE|NOSIZE|NOZORDER|FRAMECHANGED
+        apply_native_frame_colors(window, appearance)
+    except Exception:
+        pass
 
 
 _INPUT_SELECTION_INSTALLED = False
@@ -885,9 +1134,12 @@ def _style_tk_widget(widget):
             return
         if role == "titlebar":
             try:
-                widget.configure(bg=p["card"])
+                widget.configure(bg=p["card"], highlightthickness=0, highlightbackground=p["card"], bd=0)
             except tk.TclError:
-                pass
+                try:
+                    widget.configure(bg=p["card"])
+                except tk.TclError:
+                    pass
             try:
                 widget.configure(fg=p["fg"])
             except tk.TclError:
@@ -897,15 +1149,30 @@ def _style_tk_widget(widget):
             widget.configure(bg=p["border"])
             return
         if role == "tabbar":
-            widget.configure(bg=p["bg"], highlightbackground=p["bg"])
+            widget.configure(bg=p["bg"], highlightthickness=0, highlightbackground=p["bg"], bd=0)
             return
         if role == "tab":
             selected = getattr(widget, "_tab_selected", False)
-            widget.configure(bg=p["bg"], fg=p["fg"] if selected else p["muted"])
+            widget.configure(
+                bg=p["bg"],
+                fg=p["fg"] if selected else p["muted"],
+                highlightthickness=0,
+                highlightbackground=p["bg"],
+                bd=0,
+            )
             return
         if role == "tab_underline":
             selected = getattr(widget, "_tab_selected", False)
-            widget.configure(bg=p["accent"] if selected else p["bg"])
+            widget.configure(bg=p["accent"] if selected else p["bg"], highlightthickness=0, bd=0)
+            return
+        if role == "status":
+            folder = getattr(widget, "_status_folder", None)
+            widget.configure(bg=p["card"], fg=status_color(folder) if folder else p["fg"])
+            return
+        if role == "theme_toggle":
+            redraw = getattr(widget, "redraw", None)
+            if callable(redraw):
+                redraw()
             return
         if cls in ("Frame", "Labelframe", "Toplevel"):
             widget.configure(bg=p["bg"])
@@ -971,6 +1238,11 @@ def _style_tk_widget(widget):
                 highlightthickness=0,
                 highlightbackground=canvas_bg,
             )
+            text_id = getattr(widget, "_text_id", None)
+            if text_id is not None:
+                fill = p["accent"] if keep_fg else p["fg"]
+                widget._fg = fill
+                widget.itemconfig(text_id, fill=fill)
         elif cls == "Scrollbar":
             widget.configure(
                 bg=p["button_bg"],

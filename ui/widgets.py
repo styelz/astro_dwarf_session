@@ -1,12 +1,22 @@
 """Reusable themed layout helpers."""
 
 import ctypes
+import math
 import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
 
-from ui.theme import fonts, palette, spacing, status_color
+from ui.theme import (
+    apply_native_frame_colors,
+    fonts,
+    next_appearance,
+    palette,
+    spacing,
+    status_color,
+    win32_hwnd,
+)
+import ui.theme as ui_theme
 
 
 VIDEO_ASPECT = 16 / 9
@@ -183,6 +193,7 @@ def status_label(parent, folder, count=0):
     label._theme_keep_fg = True
     label._theme_role = "status"
     label._theme_font = "body"
+    label._status_folder = folder
     return label
 
 
@@ -608,10 +619,10 @@ def configure_panel_layout(host, rows, min_two_col_width=980):
 
 def title_bar(parent, title, on_minimize, on_maximize, on_close):
     """In-app title bar with window controls. Returns (bar, maximize_button)."""
-    bar = tk.Frame(parent, bg=palette["card"], highlightthickness=0, bd=0)
+    bar = tk.Frame(parent, bg=palette["card"], highlightthickness=0, bd=0, relief="flat")
     bar._theme_role = "titlebar"
     title_label = tk.Label(
-        bar, text=title, bg=palette["card"], fg=palette["fg"], font=fonts["heading"], bd=0
+        bar, text=title, bg=palette["card"], fg=palette["fg"], font=fonts["heading"], bd=0, relief="flat"
     )
     title_label._theme_role = "titlebar"
     title_label._theme_font = "heading"
@@ -699,12 +710,7 @@ class _WinRect(ctypes.Structure):
 
 
 def _toplevel_hwnd(window):
-    if sys.platform != "win32":
-        return 0
-    try:
-        return ctypes.windll.user32.GetParent(window.winfo_id())
-    except Exception:
-        return 0
+    return win32_hwnd(window)
 
 
 def hide_native_titlebar(window):
@@ -712,10 +718,12 @@ def hide_native_titlebar(window):
     window.update_idletasks()
     if sys.platform != "win32":
         window.overrideredirect(True)
+        apply_native_frame_colors(window)
         return
     try:
         hwnd = _toplevel_hwnd(window)
         if not hwnd:
+            apply_native_frame_colors(window)
             return
         gwl_style = -16
         ws_caption = 0x00C00000
@@ -728,25 +736,21 @@ def hide_native_titlebar(window):
         swp_framechanged = 0x0020
         style = ctypes.windll.user32.GetWindowLongW(hwnd, gwl_style)
         new_style = (style & ~(ws_caption | ws_dlgframe | ws_border)) | ws_thickframe
-        if style == new_style:
-            return
-        ctypes.windll.user32.SetWindowLongW(hwnd, gwl_style, new_style)
-        try:
-            policy = ctypes.c_int(2)  # DWMNCRP_ENABLED
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 2, ctypes.byref(policy), ctypes.sizeof(policy))
-        except Exception:
-            pass
-        ctypes.windll.user32.SetWindowPos(
-            hwnd, 0, 0, 0, 0, 0,
-            swp_nomove | swp_nosize | swp_nozorder | swp_framechanged,
-        )
+        if style != new_style:
+            ctypes.windll.user32.SetWindowLongW(hwnd, gwl_style, new_style)
+            ctypes.windll.user32.SetWindowPos(
+                hwnd, 0, 0, 0, 0, 0,
+                swp_nomove | swp_nosize | swp_nozorder | swp_framechanged,
+            )
+        apply_native_frame_colors(window)
     except Exception:
         window.overrideredirect(True)
+        apply_native_frame_colors(window)
 
 
 def tab_bar(parent, items, on_select, initial=None):
     """Custom equal-height tab strip. items is [(id, label), ...]."""
-    bar = tk.Frame(parent, bg=palette["bg"], highlightthickness=0, bd=0)
+    bar = tk.Frame(parent, bg=palette["bg"], highlightthickness=0, bd=0, relief="flat")
     bar._theme_role = "tabbar"
     buttons = {}
     underlines = {}
@@ -763,7 +767,7 @@ def tab_bar(parent, items, on_select, initial=None):
             on_select(tab_id)
 
     for tab_id, label in items:
-        cell = tk.Frame(bar, bg=palette["bg"], highlightthickness=0, bd=0)
+        cell = tk.Frame(bar, bg=palette["bg"], highlightthickness=0, bd=0, relief="flat")
         cell._theme_role = "tabbar"
         cell.pack(side="left")
         button = tk.Label(
@@ -776,12 +780,13 @@ def tab_bar(parent, items, on_select, initial=None):
             pady=10,
             cursor="hand2",
             bd=0,
+            relief="flat",
         )
         button._theme_role = "tab"
         button._theme_font = "body"
         button._tab_selected = False
         button.pack()
-        line = tk.Frame(cell, height=2, bg=palette["bg"], highlightthickness=0, bd=0)
+        line = tk.Frame(cell, height=2, bg=palette["bg"], highlightthickness=0, bd=0, relief="flat")
         line._theme_role = "tab_underline"
         line._tab_selected = False
         line.pack(fill="x")
@@ -795,6 +800,68 @@ def tab_bar(parent, items, on_select, initial=None):
         select(initial, notify=False)
     bar.select = select
     return bar
+
+
+def _draw_sun(canvas, color, cx, cy, radius):
+    core = radius * 0.5
+    canvas.create_oval(cx - core, cy - core, cx + core, cy + core, fill=color, outline=color)
+    for index in range(8):
+        angle = index * math.pi / 4
+        canvas.create_line(
+            cx + math.cos(angle) * radius * 0.8,
+            cy + math.sin(angle) * radius * 0.8,
+            cx + math.cos(angle) * radius * 1.35,
+            cy + math.sin(angle) * radius * 1.35,
+            fill=color,
+            width=2,
+            capstyle=tk.ROUND,
+        )
+
+
+def _draw_moon(canvas, color, background, cx, cy, radius):
+    canvas.create_oval(cx - radius, cy - radius, cx + radius, cy + radius, fill=color, outline=color)
+    canvas.create_oval(
+        cx - radius * 0.25,
+        cy - radius * 0.85,
+        cx + radius * 1.2,
+        cy + radius * 0.85,
+        fill=background,
+        outline=background,
+    )
+
+
+def _draw_redlight(canvas, color, cx, cy, radius):
+    canvas.create_oval(cx - radius - 2, cy - radius - 2, cx + radius + 2, cy + radius + 2, outline=color, width=2)
+    canvas.create_oval(cx - radius + 1, cy - radius + 1, cx + radius - 1, cy + radius - 1, fill=color, outline=color)
+
+
+def appearance_toggle(parent, on_change):
+    """Right-side tab icon that cycles Dark, Light, and Redlight."""
+    size = 28
+    canvas = tk.Canvas(parent, width=size, height=size, highlightthickness=0, bd=0, cursor="hand2")
+    canvas._theme_role = "theme_toggle"
+
+    def redraw():
+        canvas.delete("all")
+        background = palette["bg"]
+        canvas.configure(bg=background, highlightbackground=background)
+        cx = cy = size / 2
+        color = palette["fg"]
+        current = ui_theme.mode
+        if current == "light":
+            _draw_sun(canvas, color, cx, cy, 7)
+        elif current == "redlight":
+            _draw_redlight(canvas, color, cx, cy, 6)
+        else:
+            _draw_moon(canvas, color, background, cx, cy, 7)
+
+    def on_click(_event=None):
+        on_change(next_appearance())
+
+    canvas.redraw = redraw
+    canvas.bind("<Button-1>", on_click)
+    redraw()
+    return canvas
 
 
 def install_mousewheel(root):

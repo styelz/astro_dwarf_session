@@ -20,6 +20,7 @@
 
 ### Bug Fixes
 - **Windows installer launch**: The GUI no longer fails to start with `ImportError: cannot import name 'request_command_interrupt'` when the bundled `dwarf_python_api` does not provide that helper.
+- **Timezone on connect**: Dwarf 3 firmware returns `-13301` for `SET_TIME_ZONE` with every timezone ID tested (including documented IANA names such as `Europe/Paris`). Connect no longer sends that command or logs it as an error. Clock offset is still applied by `SET_TIME`.
 
 ### Packaging
 - **Single version source**: Apps, Windows installer, and GitHub releases now share one version from `CHANGELOG.md` (or `APP_VERSION`).

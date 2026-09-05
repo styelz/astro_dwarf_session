@@ -5,7 +5,7 @@ import json
 import os
 import csv
 from datetime import datetime, timedelta
-from ui.theme import apply_theme, fonts, load_appearance, palette, style_treeview_rows, sync_treeview_selection
+from ui.theme import apply_theme, fonts, load_appearance, palette, style_treeview_rows, sync_treeview_selection, theme_window_frame
 from ui.widgets import card, section_header
 
 # Directories
@@ -333,6 +333,8 @@ def show_session_detail(anchor, row):
     x = parent.winfo_rootx() + max((parent.winfo_width() - width) // 2, 0)
     y = parent.winfo_rooty() + max((parent.winfo_height() - height) // 2, 0)
     dialog.geometry(f"{width}x{height}+{x}+{y}")
+    theme_window_frame(dialog, load_appearance())
+    dialog.bind("<Map>", lambda event, win=dialog: theme_window_frame(win, load_appearance()) if event.widget is win else None)
     dialog.bind("<Escape>", lambda _event: dialog.destroy())
     dialog.grab_set()
     dialog.focus_set()

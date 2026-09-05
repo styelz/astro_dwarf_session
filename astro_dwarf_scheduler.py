@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from dwarf_session import start_dwarf_session, SessionCancelled
 
 from dwarf_python_api.lib.dwarf_utils import perform_time
-from dwarf_python_api.lib.dwarf_utils import perform_timezone
 from dwarf_python_api.lib.dwarf_utils import perform_set_location
 from dwarf_python_api.lib.dwarf_utils import perform_disconnect
 
@@ -595,6 +594,17 @@ def check_and_execute_commands(ui_instance=None, stop_event=None, skip_time_chec
     
     return sessions_processed
 
+def apply_location_after_time():
+    """SET_TIME already includes timezone_offset. SET_TIME_ZONE is still
+    in the V3 proto, but Dwarf 3 firmware returns -13301 for every ID
+    tested (IANA Continent/Town, GMT offsets, UTC), so we skip it.
+    """
+    log.notice(
+        "Timezone ID is not sent to the Dwarf (firmware rejects "
+        "SET_TIME_ZONE); clock offset was already set with SET_TIME."
+    )
+    perform_set_location()
+
 def start_connection(startSTA = False, use_web_page = False):
 
     result = False
@@ -632,12 +642,9 @@ def start_connection(startSTA = False, use_web_page = False):
 
     if startSTA and result is not False and result!= "":
         
-        #init Frame : TIME and TIMEZONE
         result = perform_time()
-       
         if result:
-           perform_timezone()
-           perform_set_location()
+           apply_location_after_time()
     
     return result
 
@@ -651,13 +658,10 @@ def start_STA_connection(CheckDwarfId = False):
     if not dwarf_ip:
         log.error("The dwarf Ip has not been set , need Bluetooth First, can't connect to wifi")
     else:
-        #init Frame : TIME and TIMEZONE
         log.notice(f'Connecting to the dwarf {config_to_dwarf_id_int(dwarf_id)} on {dwarf_ip}')
         result = perform_time()
-       
         if result:
-            perform_timezone()
-            perform_set_location()
+            apply_location_after_time()
 
         if result and CheckDwarfId:
             update_dwarf_data = update_get_config_data(dwarf_ip)

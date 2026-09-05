@@ -217,10 +217,8 @@ jobs:
       APP_VERSION: ${{ needs.setup.outputs.version }}
 
     steps:
-      - name: Checkout main branch
+      - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5

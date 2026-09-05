@@ -11,6 +11,7 @@ from geopy.exc import GeocoderInsufficientPrivileges
 from astro_dwarf_scheduler import BASE_DIR
 from ui.theme import (
     apply_theme,
+    apply_ui_appearance,
     available_font_families,
     DEFAULT_FONT_FAMILY,
     DEFAULT_FONT_SIZES,
@@ -18,7 +19,6 @@ from ui.theme import (
     load_appearance,
     load_font_settings,
     palette,
-    save_appearance,
     save_font_settings,
 )
 from ui.widgets import card, section_header, hint_label, SearchableCombobox
@@ -316,10 +316,8 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         ("BLE PSD", "ble_psd"),
         ("BLE STA SSID", "ble_sta_ssid"),
         ("BLE STA Password", "ble_sta_pwd"),
-        ("Help", "Only needed for Stellarium integration. Leave blank for defaults."),
         ("Stellarium IP", "stellarium_ip"),
         ("Stellarium Port", "stellarium_port"),
-        ("Help", "Defaults used on the Create Session page."),
         ("IR Cut", "ircut"),
         ("Binning", "binning"),
         ("Exposure", "exposure"),
@@ -348,7 +346,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         "camera_type": "imaging", "ircut": "imaging", "binning": "imaging",
         "exposure": "imaging", "gain": "imaging", "count": "imaging",
     }
-    help_groups = ["location", "stellarium", "imaging"]
+    help_groups = ["location"]
 
     cards = {}
     inners = {}
@@ -373,6 +371,10 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         "stellarium": (2, 1, 1),
         "fonts": (3, 0, 2),
     }
+    header_hints = {
+        "stellarium": "Leave blank for defaults.",
+        "imaging": "Defaults used on the Create Session page.",
+    }
     for key, title in card_order:
         outer, inner = card(panels, padding=10)
         row, column, span = panel_layout[key]
@@ -384,19 +386,25 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             padx=(0, 4) if column == 0 and span == 1 else (4, 0) if span == 1 else 0,
             pady=(0, 8),
         )
-        section_header(inner, title).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        header_row = ttk.Frame(inner, style="Card.TFrame")
+        header_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        section_header(header_row, title).pack(side="left")
+        hint = header_hints.get(key)
+        if hint:
+            hint_label(header_row, hint).pack(side="left", padx=(8, 0))
         inner.grid_columnconfigure(1, weight=1)
         cards[key] = outer
         inners[key] = inner
         rows[key] = 1
 
     appearance_var = tk.StringVar(value=load_appearance())
+    root = tab_settings.winfo_toplevel()
+    root.appearance_var = appearance_var
 
     def on_appearance_change():
-        selected = appearance_var.get()
-        save_appearance(selected)
-        root = tab_settings.winfo_toplevel()
-        apply_theme(root, selected)
+        if getattr(root, "_syncing_appearance", False):
+            return
+        apply_ui_appearance(root, appearance_var.get())
         show_saved_message()
 
     theme_row = ttk.Frame(inners["appearance"], style="Card.TFrame")
@@ -408,9 +416,16 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
     ).pack(side="left", padx=(0, 12))
     ttk.Radiobutton(
         theme_row, text="Light", value="light", variable=appearance_var, command=on_appearance_change
+    ).pack(side="left", padx=(0, 12))
+    ttk.Radiobutton(
+        theme_row, text="Redlight", value="redlight", variable=appearance_var, command=on_appearance_change
     ).pack(side="left")
     hint_label(inners["appearance"], "Applies immediately and is remembered for next launch.").grid(
         row=rows["appearance"], column=0, columnspan=2, sticky="w", pady=(6, 0)
+    )
+    rows["appearance"] += 1
+    hint_label(inners["appearance"], "Redlight is a dim red screen to avoid lighting the capture.").grid(
+        row=rows["appearance"], column=0, columnspan=2, sticky="w", pady=(2, 0)
     )
 
     font_settings = load_font_settings()

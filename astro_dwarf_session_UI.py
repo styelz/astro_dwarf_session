@@ -37,10 +37,11 @@ from tabs import settings
 from tabs import create_session
 from tabs import overview_session
 from tabs import result_session
-from ui.theme import apply_theme, load_appearance, palette, fonts, style_log_text, close_date_entry_popups
+from ui.theme import apply_theme, apply_ui_appearance, load_appearance, palette, fonts, style_log_text, close_date_entry_popups
 from ui.widgets import (
     VIDEO_ASPECT,
     ScrollingLabel,
+    appearance_toggle,
     card,
     hex_to_rgb,
     hide_native_titlebar,
@@ -672,6 +673,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self._on_custom_tab,
             initial="main",
         )
+        self.theme_toggle = appearance_toggle(self.tab_strip, self._on_appearance_toggle)
+        self.theme_toggle.pack(side="right", padx=(8, 14), pady=(6, 8))
         self.tab_strip.pack(fill="x", side="top")
 
         # Create tabs (native notebook tabs are hidden; the custom strip switches pages)
@@ -781,6 +784,9 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.tab_control.select(index)
         except (ValueError, tk.TclError):
             pass
+
+    def _on_appearance_toggle(self, appearance):
+        apply_ui_appearance(self, appearance)
 
     def minimize_window(self):
         self.iconify()

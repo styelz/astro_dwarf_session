@@ -325,10 +325,10 @@ def start_dwarf_session(program, stop_event=None, ui_instance=None):
         # V3: SET_LOCATION and CMD_GLOBAL_TASK_GET_DEVICE_STATE_INFO are
         # now both sent automatically - location at the connection layer
         # (astro_dwarf_scheduler.start_connection()/start_STA_connection(),
-        # alongside SET_TIME/SET_TIME_ZONE), device-state-info at the WS
-        # protocol layer (websockets_utils.send_message_init(), once per
-        # connection) - matching the official app's own behavior. No
-        # explicit calls needed here anymore.
+        # alongside SET_TIME), device-state-info at the WS protocol layer
+        # (websockets_utils.send_message_init(), once per connection).
+        # SET_TIME_ZONE is skipped: Dwarf 3 firmware returns -13301 for
+        # timezone IDs. No explicit calls needed here anymore.
 
         # Go Live
         continue_action = perform_GoLive()
