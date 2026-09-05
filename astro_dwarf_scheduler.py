@@ -599,10 +599,6 @@ def apply_location_after_time():
     in the V3 proto, but Dwarf 3 firmware returns -13301 for every ID
     tested (IANA Continent/Town, GMT offsets, UTC), so we skip it.
     """
-    log.notice(
-        "Timezone ID is not sent to the Dwarf (firmware rejects "
-        "SET_TIME_ZONE); clock offset was already set with SET_TIME."
-    )
     perform_set_location()
 
 def start_connection(startSTA = False, use_web_page = False):

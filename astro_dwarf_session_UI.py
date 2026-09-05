@@ -1,5 +1,8 @@
 from fractions import Fraction
 import os
+import shutil
+import socket
+import subprocess
 import time
 import threading
 import io
@@ -13,13 +16,28 @@ import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import messagebox, ttk
 from astro_dwarf_scheduler import check_and_execute_commands, start_connection, start_STA_connection, setup_new_config
-from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto, perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, perform_set_preview_quality, unset_HostMaster, set_HostMaster, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown, perform_reboot
+from dwarf_python_api.lib.dwarf_utils import perform_stopAstroPhoto, perform_start_autofocus, read_longitude, read_latitude, perform_disconnect, perform_time, perform_GoLive, unset_HostMaster, set_HostMaster, perform_stop_goto, perform_calibration, start_polar_align, motor_action, perform_powerdown, perform_reboot
+try:
+    from dwarf_python_api.lib.dwarf_utils import (
+        perform_open_camera,
+        perform_open_widecamera,
+        perform_enter_photo_mode,
+    )
+except ImportError:
+    def perform_open_camera(*args, **kwargs):
+        return False
+    def perform_open_widecamera(*args, **kwargs):
+        return False
+    def perform_enter_photo_mode(*args, **kwargs):
+        return False
 from dwarf_python_api.lib.dwarf_utils import perform_powerOpenRGB, perform_powerCloseRGB, perform_powerIndOn, perform_powerIndOff
 from dwarf_python_api.lib.websockets_utils import get_client_status
 try:
-    from dwarf_python_api.lib.websockets_utils import request_command_interrupt
+    from dwarf_python_api.lib.websockets_utils import request_command_interrupt, clear_command_interrupt
 except ImportError:
     def request_command_interrupt():
+        return None
+    def clear_command_interrupt():
         return None
 from astro_dwarf_scheduler import LIST_ASTRO_DIR, get_json_files_sorted
 
@@ -245,27 +263,69 @@ class AstroDwarfSchedulerApp(tk.Tk):
         except Exception:
             return False
 
+    def _config_data(self):
+        try:
+            return config_py.get_config_data() or {}
+        except Exception:
+            return {}
+
+    def _dwarf_ip(self):
+        return self._config_data().get("ip") or "127.0.0.1"
+
+    def _dwarf_id_int(self):
+        dwarf_id = self._config_data().get("dwarf_id") or 2
+        try:
+            return config_to_dwarf_id_int(dwarf_id)
+        except Exception:
+            return 2
+
+    def _preview_is_wide(self):
+        """True when settings point at the wide-angle lens."""
+        for key in ("camera_type", "device_type"):
+            try:
+                if hasattr(self, "config_vars") and key in self.config_vars:
+                    if "wide" in str(self.config_vars[key].get()).lower():
+                        return True
+            except Exception:
+                pass
+        for key in ("camera_type", "device_type"):
+            if "wide" in str(self._config_data().get(key, "")).lower():
+                return True
+        return False
+
+    def _uses_rtsp_live(self):
+        """Dwarf 3 / Mini live view is RTSP; Dwarf II and stacking use HTTP JPEG."""
+        return self._dwarf_id_int() >= 3 and not self._video_session_active()
+
     def _ensure_live_preview_mode(self):
-        """Ask the telescope to enter live/preview mode. Never call during imaging."""
+        """Open the camera for live view. Never call during imaging."""
         if getattr(self, "session_running", False):
             return
         if not self._is_dwarf_connected():
-            self.log("Telescope not connected; waiting for live mode / first frame", level="warning")
+            self.log("Telescope not connected; waiting for live stream", level="warning")
             return
         try:
             if perform_GoLive():
-                self.log("Go Live succeeded", level="success")
-            else:
-                self.log("Go Live failed or was skipped", level="warning")
+                self.log("Left astro mode for live view", level="success")
         except Exception as e:
-            self.log(f"Go Live error: {e}", level="error")
+            self.log(f"Go Live error: {e}", level="warning")
         try:
-            if perform_set_preview_quality(1):
-                self.log("Preview quality set", level="success")
+            if perform_enter_photo_mode():
+                self.log("Entered photo/live mode", level="success")
             else:
-                self.log("Preview quality not set (non-blocking)", level="warning")
+                self.log("Photo/live mode was not entered", level="warning")
         except Exception as e:
-            self.log(f"Preview quality error: {e}", level="warning")
+            self.log(f"Photo mode error: {e}", level="warning")
+        open_camera = perform_open_widecamera if self._preview_is_wide() else perform_open_camera
+        lens = "wide" if self._preview_is_wide() else "tele"
+        try:
+            if open_camera():
+                self.log(f"Opened {lens} camera for live preview", level="success")
+            else:
+                self.log(f"Open {lens} camera failed or was skipped", level="warning")
+        except Exception as e:
+            self.log(f"Open camera error: {e}", level="error")
+        self._rtsp_transport = "tcp"
 
     def _set_video_status(self, text, clear_image=True):
         try:
@@ -278,11 +338,14 @@ class AstroDwarfSchedulerApp(tk.Tk):
             pass
 
     def _resolve_video_stream_url(self):
-        dwarf_ip = "127.0.0.1"
-        data_config = config_py.get_config_data()
-        if data_config.get("ip"):
-            dwarf_ip = data_config["ip"]
-        self.video_stream_url = f"http://{dwarf_ip}:8092/mainstream"
+        dwarf_ip = self._dwarf_ip()
+        wide = self._preview_is_wide()
+        if self._uses_rtsp_live():
+            path = "ch1/stream0" if wide else "ch0/stream0"
+            self.video_stream_url = f"rtsp://{dwarf_ip}/{path}"
+        else:
+            path = "secondstream" if wide else "mainstream"
+            self.video_stream_url = f"http://{dwarf_ip}:8092/{path}"
         return self.video_stream_url
 
     def _video_session_active(self):
@@ -295,10 +358,62 @@ class AstroDwarfSchedulerApp(tk.Tk):
         if self._video_session_active():
             return True
         started = getattr(self, "_video_preview_started_at", 0) or 0
-        return (time.time() - started) < 20
+        return (time.time() - started) < 25
+
+    def _tcp_port_open(self, host, port, timeout=1.2):
+        sock = socket.socket()
+        sock.settimeout(timeout)
+        try:
+            sock.connect((host, port))
+            return True
+        except Exception:
+            return False
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def _find_ffmpeg(self):
+        return shutil.which("ffmpeg")
+
+    def _stop_ffmpeg(self):
+        proc = getattr(self, "_ffmpeg_proc", None)
+        self._ffmpeg_proc = None
+        if proc is None:
+            return
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=1)
+        except Exception:
+            pass
 
     def _video_stream_is_available(self, url, timeout=1.2):
-        """True only when the MJPEG endpoint is actually sending data."""
+        """True when the live endpoint is actually serving, or RTSP may still come up."""
+        if url.startswith("rtsp://"):
+            if self._tcp_port_open(self._dwarf_ip(), 554, timeout):
+                return True
+            # D3 RTSP can be UDP-only; try ffmpeg during the retry window.
+            return self._video_should_retry()
+        response = None
+        try:
+            response = requests.get(url, stream=True, timeout=(timeout, timeout))
+            if response.status_code != 200:
+                return False
+            for chunk in response.iter_content(chunk_size=1024):
+                return bool(chunk)
+            return False
+        except Exception:
+            return False
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
         response = None
         try:
             response = requests.get(url, stream=True, timeout=(timeout, timeout))
@@ -316,10 +431,109 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 except Exception:
                     pass
 
+    def _iter_mjpeg_chunks(self, source, chunk_size=1024):
+        if hasattr(source, "iter_content"):
+            yield from source.iter_content(chunk_size=chunk_size)
+            return
+        while True:
+            chunk = source.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+    def _consume_mjpeg_source(self, source, current_url, idle_timeout=8):
+        """Read JPEG frames from an MJPEG byte source. Returns True if a frame arrived."""
+        bytes_data = b""
+        last_update = 0
+        connect_time = time.time()
+        got_frame = False
+        for chunk in self._iter_mjpeg_chunks(source):
+            if getattr(self, "_stop_video_stream", False):
+                print("Stopping video stream worker")
+                break
+            if getattr(self, "_reconnect_video_stream", False):
+                break
+            if chunk:
+                bytes_data += chunk
+            while True:
+                start = bytes_data.find(b"\xff\xd8")
+                if start == -1:
+                    if len(bytes_data) > 1:
+                        bytes_data = bytes_data[-1:]
+                    break
+                end = bytes_data.find(b"\xff\xd9", start + 2)
+                if end == -1:
+                    if start > 0:
+                        bytes_data = bytes_data[start:]
+                    if len(bytes_data) > 2_000_000:
+                        bytes_data = bytes_data[-64:]
+                    break
+                jpg = bytes_data[start : end + 2]
+                bytes_data = bytes_data[end + 2 :]
+                now = time.time()
+                if now - last_update > 0.3:
+                    last_update = now
+                    self.after(0, self.update_video_canvas, jpg)
+                    if not got_frame:
+                        got_frame = True
+                        self.log(
+                            f"First video frame from {current_url}",
+                            level="success",
+                        )
+            if not got_frame and (time.time() - connect_time) > idle_timeout:
+                break
+        return got_frame
+
+    def _open_http_mjpeg(self, url):
+        stream = requests.get(url, stream=True, timeout=(5, 3))
+        if stream.status_code != 200:
+            stream.close()
+            raise requests.exceptions.HTTPError(f"HTTP {stream.status_code} for {url}")
+        return stream
+
+    def _open_rtsp_mjpeg(self, url):
+        ffmpeg = self._find_ffmpeg()
+        if not ffmpeg:
+            raise RuntimeError(
+                "Dwarf 3 live view is RTSP. Install ffmpeg and keep it on PATH."
+            )
+        transport = getattr(self, "_rtsp_transport", "tcp") or "tcp"
+        kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "bufsize": 0,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        proc = subprocess.Popen(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-rtsp_transport",
+                transport,
+                "-timeout",
+                "8000000",
+                "-i",
+                url,
+                "-an",
+                "-f",
+                "mjpeg",
+                "-q:v",
+                "5",
+                "pipe:1",
+            ],
+            **kwargs,
+        )
+        self._ffmpeg_proc = proc
+        return proc.stdout
+
     def _stop_idle_video_preview(self, status="Click to start the stream"):
         """Leave preview off without retrying or logging that the stream is down."""
         self._stop_video_stream = True
         self._reconnect_video_stream = False
+        self._stop_ffmpeg()
         self.after(0, lambda: self._set_video_status(status))
 
     def _video_wait(self, seconds):
@@ -336,11 +550,12 @@ class AstroDwarfSchedulerApp(tk.Tk):
         return True
 
     def reconnect_video_preview(self):
-        """Drop the current HTTP pull so the worker opens a fresh socket."""
+        """Drop the current pull so the worker opens a fresh socket."""
         self._stop_video_stream = False
         self._video_preview_started_at = time.time()
         if getattr(self, "_video_worker_running", False):
             self._reconnect_video_stream = True
+            self._stop_ffmpeg()
             self.log("Reconnecting video stream")
             return
         self.start_video_preview(ensure_live=False)
@@ -366,7 +581,6 @@ class AstroDwarfSchedulerApp(tk.Tk):
         def video_stream_worker():
             self._video_worker_running = True
             print("Starting video stream worker")
-            current_url = self._resolve_video_stream_url()
             announced_url = False
 
             while not getattr(self, "_stop_video_stream", False):
@@ -375,8 +589,19 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 if getattr(self, "_request_live_mode", False):
                     self._request_live_mode = False
                     self._ensure_live_preview_mode()
+                    current_url = self._resolve_video_stream_url()
 
                 in_session = self._video_session_active()
+                if current_url.startswith("rtsp://") and not self._find_ffmpeg():
+                    self._stop_idle_video_preview(
+                        "Install ffmpeg for Dwarf 3 live preview"
+                    )
+                    self.log(
+                        "Dwarf 3 live view is RTSP (rtsp://IP/ch0/stream0). ffmpeg was not found on PATH.",
+                        level="error",
+                    )
+                    break
+
                 if not self._video_stream_is_available(current_url):
                     if in_session or self._video_should_retry():
                         status = (
@@ -405,73 +630,29 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 stream = None
                 try:
                     self.after(0, lambda: self._set_video_status("Connecting..."))
-                    stream = requests.get(
-                        current_url, stream=True, timeout=(5, 3)
-                    )
-                    status_code = stream.status_code
-                    if status_code != 200:
-                        stream.close()
-                        stream = None
-                        raise requests.exceptions.HTTPError(
-                            f"HTTP {status_code} for {current_url}"
-                        )
-
+                    if current_url.startswith("rtsp://"):
+                        stream = self._open_rtsp_mjpeg(current_url)
+                    else:
+                        stream = self._open_http_mjpeg(current_url)
                     self.after(
                         0,
                         lambda: self._set_video_status(
                             "Waiting for live mode / first frame..."
                         ),
                     )
-                    bytes_data = b""
-                    last_update = 0
-                    connect_time = time.time()
-                    got_frame = False
-
-                    for chunk in stream.iter_content(chunk_size=1024):
-                        if getattr(self, "_stop_video_stream", False):
-                            print("Stopping video stream worker")
-                            break
-                        if getattr(self, "_reconnect_video_stream", False):
-                            break
-
-                        if chunk:
-                            bytes_data += chunk
-
-                        while True:
-                            start = bytes_data.find(b"\xff\xd8")
-                            if start == -1:
-                                if len(bytes_data) > 1:
-                                    bytes_data = bytes_data[-1:]
-                                break
-                            end = bytes_data.find(b"\xff\xd9", start + 2)
-                            if end == -1:
-                                if start > 0:
-                                    bytes_data = bytes_data[start:]
-                                if len(bytes_data) > 2_000_000:
-                                    bytes_data = bytes_data[-64:]
-                                break
-                            jpg = bytes_data[start : end + 2]
-                            bytes_data = bytes_data[end + 2 :]
-                            now = time.time()
-                            if now - last_update > 0.3:
-                                last_update = now
-                                self.after(0, self.update_video_canvas, jpg)
-                                if not got_frame:
-                                    got_frame = True
-                                    self.log(
-                                        f"First video frame from {current_url}",
-                                        level="success",
-                                    )
-
-                        if not got_frame and (time.time() - connect_time) > 5:
-                            break
+                    got_frame = self._consume_mjpeg_source(stream, current_url)
+                    if current_url.startswith("rtsp://") and not got_frame:
+                        current = getattr(self, "_rtsp_transport", "tcp")
+                        self._rtsp_transport = "udp" if current == "tcp" else "tcp"
                 except requests.exceptions.RequestException:
                     pass
                 except Exception as e:
                     if not getattr(self, "_stop_video_stream", False):
                         print(f"Video stream error: {e}")
+                        self.log(f"Video stream error: {e}", level="warning")
                 finally:
-                    if stream is not None:
+                    self._stop_ffmpeg()
+                    if stream is not None and hasattr(stream, "close"):
                         try:
                             stream.close()
                         except Exception:
@@ -498,6 +679,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 break
 
             self._video_worker_running = False
+            self._stop_ffmpeg()
             print("Video stream worker stopped")
             if (
                 not getattr(self, "_stop_video_stream", True)
@@ -567,6 +749,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
             else:
                 # Turn video stream off
                 self._stop_video_stream = True
+                self._stop_ffmpeg()
                 self.video_canvas.config(image='', text="Video stream is off")
                 self.log("Video stream turned off")
         
@@ -632,6 +815,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.scheduler_stop_event = threading.Event()
         self.session_running = False
         self.session_stop_event = threading.Event()
+        self.action_stop_event = threading.Event()
+        self._current_action = None
         self.unset_lock_device_mode = True
         self.bluetooth_connected = False
         self.result = False
@@ -641,6 +826,8 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self._reconnect_video_stream = False
         self._request_live_mode = False
         self._video_preview_started_at = 0
+        self._ffmpeg_proc = None
+        self._rtsp_transport = "tcp"
         self._single_click_timer = None
 
         self.title_bar, self._max_btn = title_bar(
@@ -934,6 +1121,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
 
         # Stop video stream
         self._stop_video_stream = True
+        self._stop_ffmpeg()
 
         # Force stop the scheduler immediately
         if self.scheduler_running:
@@ -1123,11 +1311,71 @@ class AstroDwarfSchedulerApp(tk.Tk):
         self.toggle_lights_button.config(state=other_state)
         self._sync_stop_session_button()
 
+    def _action_thread_alive(self):
+        for name in ("eq_thread", "polar_thread", "cal_thread", "autofocus_thread"):
+            thread = getattr(self, name, None)
+            if thread is not None and thread.is_alive():
+                return True
+        return False
+
+    def _action_is_running(self):
+        return bool(getattr(self, "_current_action", None)) or self._action_thread_alive()
+
+    def _can_start_action(self, label):
+        if getattr(self, "session_running", False):
+            self.log(f"Cannot start {label}: a session is running.", level="warning")
+            return False
+        if self._action_is_running():
+            current = getattr(self, "_current_action", None) or "another task"
+            self.log(f"Cannot start {label}: {current} is already running.", level="warning")
+            return False
+        return True
+
+    def _begin_action(self, name):
+        self._current_action = name
+        self.action_stop_event.clear()
+        if not getattr(self, "session_running", False):
+            self.session_stop_event.clear()
+        try:
+            clear_command_interrupt()
+        except Exception:
+            pass
+        self.after(0, self._sync_stop_session_button)
+
+    def _end_action(self, name=None):
+        if name is None or getattr(self, "_current_action", None) == name:
+            self._current_action = None
+        self.after(0, self._sync_stop_session_button)
+
+    def _action_should_stop(self):
+        if getattr(self, "action_stop_event", None) is not None and self.action_stop_event.is_set():
+            return True
+        if (
+            getattr(self, "session_running", False)
+            and getattr(self, "session_stop_event", None) is not None
+            and self.session_stop_event.is_set()
+        ):
+            return True
+        return False
+
+    def _wait_interruptible(self, seconds, message=None):
+        if message:
+            self.log(message)
+        deadline = time.time() + float(seconds or 0)
+        while time.time() < deadline:
+            if self._action_should_stop():
+                return False
+            time.sleep(0.1)
+        return True
+
     def _sync_stop_session_button(self):
-        """Stop Session is only usable while a session is actually running."""
+        """Stop Session is usable during an imaging session or a main-page task."""
         running = (
-            getattr(self, "scheduler_running", False)
-            and getattr(self, "session_running", False)
+            (
+                getattr(self, "scheduler_running", False)
+                and getattr(self, "session_running", False)
+            )
+            or self._action_is_running()
         )
         try:
             if hasattr(self, "stop_session_button"):
@@ -1236,7 +1484,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
             video_inner, text="Toggle Lights", state=tk.DISABLED, command=self.toggle_lights
         )
         self.toggle_lights_button.pack(fill="x", side="bottom", pady=(0, 6))
-        Tooltip(self.stop_session_button, "Stop the current session")
+        Tooltip(self.stop_session_button, "Stop the current session or main-page task")
         Tooltip(self.toggle_lights_button, "Toggle lights on/off")
 
         section_header(video_inner, "Live Preview").pack(anchor="w", pady=(0, 8))
@@ -1558,28 +1806,32 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.unset_thread.start()
 
     def start_eq_solving(self):
-        # Only start if not already running
-        if not hasattr(self, 'eq_thread') or not self.eq_thread.is_alive():
-            self.eq_thread = threading.Thread(target=self.run_start_eq_solving, daemon=True)
-            self.eq_thread.start()
+        if not self._can_start_action("EQ Solving"):
+            return
+        self._begin_action("EQ Solving")
+        self.eq_thread = threading.Thread(target=self.run_start_eq_solving, daemon=True)
+        self.eq_thread.start()
 
     def start_polar_position(self):
-        # Only start if not already running
-        if not hasattr(self, 'polar_thread') or not self.polar_thread.is_alive():
-            self.polar_thread = threading.Thread(target=self.run_start_polar_position, daemon=True)
-            self.polar_thread.start()
+        if not self._can_start_action("Polar Position"):
+            return
+        self._begin_action("Polar Position")
+        self.polar_thread = threading.Thread(target=self.run_start_polar_position, daemon=True)
+        self.polar_thread.start()
 
     def start_calibration(self):
-        # Only start if not already running
-        if not hasattr(self, 'cal_thread') or not self.cal_thread.is_alive():
-            self.cal_thread = threading.Thread(target=self.run_start_calibration, daemon=True)
-            self.cal_thread.start()
+        if not self._can_start_action("Calibration"):
+            return
+        self._begin_action("Calibration")
+        self.cal_thread = threading.Thread(target=self.run_start_calibration, daemon=True)
+        self.cal_thread.start()
 
     def start_auto_focus_button(self):
-        # Only start if not already running
-        if not hasattr(self, 'autofocus_thread') or not self.autofocus_thread.is_alive():
-            self.autofocus_thread = threading.Thread(target=self.start_auto_focus, daemon=True)
-            self.autofocus_thread.start()
+        if not self._can_start_action("Auto Focus"):
+            return
+        self._begin_action("Auto Focus")
+        self.autofocus_thread = threading.Thread(target=self.start_auto_focus, daemon=True)
+        self.autofocus_thread.start()
 
     def start_powerdown(self):
         # Show confirmation dialog
@@ -1616,12 +1868,14 @@ class AstroDwarfSchedulerApp(tk.Tk):
             self.log("Reboot cancelled by user.")
 
     def run_stop_astro_photo(self, confirm=True):
-        if confirm and not getattr(self, "session_running", False):
-            self.log("No session is running.", level="warning")
+        session = bool(getattr(self, "session_running", False))
+        action = getattr(self, "_current_action", None)
+        if confirm and not session and not action:
+            self.log("Nothing is running.", level="warning")
             self._sync_stop_session_button()
             return
 
-        if confirm:
+        if confirm and session:
             result = messagebox.askyesno(
                 "Confirm Stopping Astro Photo Session",
                 "Are you sure you want to stop the current session?",
@@ -1631,39 +1885,46 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 self.log("Stopping session cancelled by user.")
                 return
 
-        self.session_stop_event.set()
-        self.session_running = False
+        self.action_stop_event.set()
+        if session:
+            self.session_stop_event.set()
+            self.session_running = False
         self._sync_stop_session_button()
         if not hasattr(self, "stop_astro_photo") or not self.stop_astro_photo.is_alive():
             self.stop_astro_photo = threading.Thread(
-                target=self._stop_current_session, daemon=True
+                target=self._stop_current_session,
+                kwargs={"stop_imaging": session, "action_name": action},
+                daemon=True,
             )
             self.stop_astro_photo.start()
         else:
-            self.log("Session stop already in progress.")
+            self.log("Stop already in progress.")
 
-    def _stop_current_session(self):
-        self.log("Stopping current session...")
-        self.session_stop_event.set()
+    def _stop_current_session(self, stop_imaging=False, action_name=None):
+        if action_name and not stop_imaging:
+            self.log(f"Stopping {action_name}...")
+        else:
+            self.log("Stopping current session...")
+        self.action_stop_event.set()
+        if stop_imaging:
+            self.session_stop_event.set()
         try:
             request_command_interrupt()
-            perform_stopAstroPhoto()
+            if stop_imaging:
+                perform_stopAstroPhoto()
             perform_stop_goto()
-            self.log("Stop requested; waiting for the session to finish...")
+            if action_name and not stop_imaging:
+                self.log(f"Stop requested for {action_name}.")
+            else:
+                self.log("Stop requested; waiting for the session to finish...")
         except Exception as e:
-            self.log(f"Error requesting session stop: {e}", level="error")
+            self.log(f"Error requesting stop: {e}", level="error")
 
     def toggle_lights(self):
         # Only start if not already running
         if not hasattr(self, 'toogle_lights_thread') or not self.toogle_lights_thread.is_alive():
             self.toogle_lights_thread = threading.Thread(target=self.run_toogle_lights, daemon=True)
             self.toogle_lights_thread.start()
-
-    def start_auto_focus_button(self):
-        # Only start if not already running
-        if not hasattr(self, 'autofocus_thread') or not self.autofocus_thread.is_alive():
-            self.autofocus_thread = threading.Thread(target=self.start_auto_focus, daemon=True)
-            self.autofocus_thread.start()
 
     def verifyCountdown(self, wait):
         '''
@@ -1795,19 +2056,30 @@ class AstroDwarfSchedulerApp(tk.Tk):
             result = False
             self.log("Starting EQ Solving process...")
             while not result and attempt < 3:
+                if self._action_should_stop():
+                    self.log("EQ Solving stopped")
+                    return
                 attempt += 1
-                setattr(self, '_stop_video_stream', False)
-                self.start_video_preview()
                 result = start_polar_align()
+                if self._action_should_stop():
+                    self.log("EQ Solving stopped")
+                    return
                 if not result:
-                    time.sleep(10)  # Sleep for 10 seconds between checks
+                    if not self._wait_interruptible(10):
+                        self.log("EQ Solving stopped")
+                        return
         except Exception as e:
+            if self._action_should_stop():
+                self.log("EQ Solving stopped")
+                return
             try:
                 read_longitude()
                 read_latitude()
                 self.log(f"Error during EQ Solving: {e}", level="error")
             except Exception as e:
                 self.log(f"Error: Missing Longitude/Latitude in settings", level="error")
+        finally:
+            self._end_action("EQ Solving")
 
     def run_start_polar_position(self):
         try:
@@ -1822,17 +2094,22 @@ class AstroDwarfSchedulerApp(tk.Tk):
             result = False
             self.log("Starting Polar Alignment positioning...")
 
-            setattr(self, '_stop_video_stream', False)
-
             while not result and attempt < 1:
+                if self._action_should_stop():
+                    self.log("Polar Position stopped")
+                    return
                 attempt += 1
                 # Rotation Motor Resetting
                 result = motor_action(5)
+                if self._action_should_stop():
+                    self.log("Polar Position stopped")
+                    return
                 if result:
                     # Pitch Motor Resetting
                     result = motor_action(6)
-
-                self.start_video_preview()
+                if self._action_should_stop():
+                    self.log("Polar Position stopped")
+                    return
 
                 if result and dwarf_id_int >= 3:
                     # Rotation Motor positioning D3
@@ -1840,6 +2117,9 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 elif result:
                     # Rotation Motor positioning
                     result = motor_action(2)
+                if self._action_should_stop():
+                    self.log("Polar Position stopped")
+                    return
                 if result and dwarf_id_int >= 3:
                     # Pitch Motor positioning D3
                     result = motor_action(7)
@@ -1847,25 +2127,44 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     # Pitch Motor positioning
                     result = motor_action(3)
 
+                if self._action_should_stop():
+                    self.log("Polar Position stopped")
+                    return
                 if result:
                     self.log("Successfully positioned for polar alignment")
                 if not result:
-                    time.sleep(10)  # Sleep for 10 seconds between checks
+                    if not self._wait_interruptible(10):
+                        self.log("Polar Position stopped")
+                        return
 
         except Exception as e:
-            self.log(f"Error in Polar Align positioning: {e}", level="error")
+            if self._action_should_stop():
+                self.log("Polar Position stopped")
+            else:
+                self.log(f"Error in Polar Align positioning: {e}", level="error")
+        finally:
+            self._end_action("Polar Position")
 
     def start_auto_focus(self):
         try:
             self.log("Starting Auto Focus process...")
+            if self._action_should_stop():
+                self.log("Auto Focus stopped")
+                return
             setattr(self, '_stop_video_stream', False)
             self.start_video_preview(ensure_live=False)
 
             continue_action = perform_time()
+            if self._action_should_stop():
+                self.log("Auto Focus stopped")
+                return
             verify_action(continue_action, "step_0")
 
             # Go Live
             continue_action = perform_GoLive()
+            if self._action_should_stop():
+                self.log("Auto Focus stopped")
+                return
             verify_action(continue_action, "step_1a")
             self.reconnect_video_preview()
 
@@ -1873,38 +2172,65 @@ class AstroDwarfSchedulerApp(tk.Tk):
             wait_before = 5
 
             continue_action = perform_stop_goto()
+            if self._action_should_stop():
+                self.log("Auto Focus stopped")
+                return
             verify_action(continue_action, "step_6")
-            self.log(f"Waiting for {wait_before} seconds")
-            time.sleep(wait_before)
+            if not self._wait_interruptible(wait_before, f"Waiting for {wait_before} seconds"):
+                self.log("Auto Focus stopped")
+                return
 
             self.log("Starting Auto Focus")
-            self.log(f"Waiting for {wait_before} seconds")
-            time.sleep(wait_before)
+            if not self._wait_interruptible(wait_before, f"Waiting for {wait_before} seconds"):
+                self.log("Auto Focus stopped")
+                return
             continue_action = perform_start_autofocus()
+            if self._action_should_stop():
+                self.log("Auto Focus stopped")
+                return
             verify_action(continue_action, "step_7")
-            self.log(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            if not self._wait_interruptible(wait_after, f"Waiting for {wait_after} seconds"):
+                self.log("Auto Focus stopped")
+                return
             continue_action = perform_stop_goto()
-            self.log(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            if self._action_should_stop():
+                self.log("Auto Focus stopped")
+                return
+            if not self._wait_interruptible(wait_after, f"Waiting for {wait_after} seconds"):
+                self.log("Auto Focus stopped")
+                return
             continue_action = perform_start_autofocus()
 
         except Exception as e:
-            self.log(f"Error in Auto Focus: {e}", level="error")
+            if self._action_should_stop():
+                self.log("Auto Focus stopped")
+            else:
+                self.log(f"Error in Auto Focus: {e}", level="error")
+        finally:
+            self._end_action("Auto Focus")
 
     def run_start_calibration(self):
         try:
 
             # Session initialization
             self.log("Starting Calibration process...")
+            if self._action_should_stop():
+                self.log("Calibration stopped")
+                return
             setattr(self, '_stop_video_stream', False)
             self.start_video_preview(ensure_live=False)
 
             continue_action = perform_time()
+            if self._action_should_stop():
+                self.log("Calibration stopped")
+                return
             verify_action(continue_action, "step_0")
 
             # Go Live
             continue_action = perform_GoLive()
+            if self._action_should_stop():
+                self.log("Calibration stopped")
+                return
             verify_action(continue_action, "step_1a")
             self.reconnect_video_preview()
 
@@ -1912,22 +2238,41 @@ class AstroDwarfSchedulerApp(tk.Tk):
             wait_before = 5
 
             continue_action = perform_stop_goto()
+            if self._action_should_stop():
+                self.log("Calibration stopped")
+                return
             verify_action(continue_action, "step_6")
-            self.log(f"Waiting for {wait_before} seconds")
-            time.sleep(wait_before)
+            if not self._wait_interruptible(wait_before, f"Waiting for {wait_before} seconds"):
+                self.log("Calibration stopped")
+                return
 
             self.log("Starting Calibration")
-            self.log(f"Waiting for {wait_before} seconds")
-            time.sleep(wait_before)
+            if not self._wait_interruptible(wait_before, f"Waiting for {wait_before} seconds"):
+                self.log("Calibration stopped")
+                return
             continue_action = perform_calibration()
+            if self._action_should_stop():
+                self.log("Calibration stopped")
+                return
             verify_action(continue_action, "step_7")
-            self.log(f"Waiting for {wait_after} seconds")
-            time.sleep(wait_after)
+            if not self._wait_interruptible(wait_after, f"Waiting for {wait_after} seconds"):
+                self.log("Calibration stopped")
+                return
             continue_action = perform_stop_goto()
-            self.log(f"Waiting for {wait_after} seconds")
+            if self._action_should_stop():
+                self.log("Calibration stopped")
+                return
+            if not self._wait_interruptible(wait_after, f"Waiting for {wait_after} seconds"):
+                self.log("Calibration stopped")
+                return
 
         except Exception as e:
-            self.log(f"Error in Calibration: {e}", level="error")
+            if self._action_should_stop():
+                self.log("Calibration stopped")
+            else:
+                self.log(f"Error in Calibration: {e}", level="error")
+        finally:
+            self._end_action("Calibration")
 
     def run_stop_astrophotos(self):
         try:
