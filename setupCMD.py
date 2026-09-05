@@ -1,13 +1,13 @@
 from cx_Freeze import setup, Executable
 import sys
-from app_version import get_app_version
+from app_version import get_app_version, packaged_version_files
 
 VERSION = get_app_version()
 
 # Dependencies are automatically detected, but it might need
 # fine tuning.
 
-buildOptions = dict(include_files = [('dwarf_ble_connect/','./dwarf_ble_connect'),('Install/','.')]) 
+buildOptions = dict(include_files = [('dwarf_ble_connect/','./dwarf_ble_connect'),('Install/','.')] + packaged_version_files()) 
 #folder,relative path. Use tuple like in the single file to set a absolute path.
 
  

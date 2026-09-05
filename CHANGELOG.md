@@ -24,6 +24,7 @@
 ### Packaging
 - **Single version source**: Apps, Windows installer, and GitHub releases now share one version from `CHANGELOG.md` (or `APP_VERSION`).
 - **Same-version rebuilds**: Re-running the GitHub Action for an existing version replaces that GitHub release and tag.
+- **Frozen window version**: Packaged apps now ship `VERSION` and `CHANGELOG.md` so the header version works in the installed build, not only from source.
 
 ## [1.7.6] - 2025-10-15
 

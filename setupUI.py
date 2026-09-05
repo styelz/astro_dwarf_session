@@ -1,6 +1,6 @@
 from cx_Freeze import setup, Executable
 import sys
-from app_version import get_app_version
+from app_version import get_app_version, packaged_version_files
 
 VERSION = get_app_version()
 
@@ -11,7 +11,7 @@ buildOptions = dict(
         ('dwarf_ble_connect/', './dwarf_ble_connect'),
         ('Install/', '.'),
         ('Install/astro_dwarf_session_UI.ico', 'astro_dwarf_session_UI.ico')  # Copy icon to root for runtime access
-    ]
+    ] + packaged_version_files()
 )
 
 # Define the base for a GUI application

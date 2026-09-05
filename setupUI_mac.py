@@ -5,7 +5,7 @@ Setup script for building Astro Dwarf Scheduler GUI application on macOS using p
 from setuptools import setup
 import sys
 import os
-from app_version import get_app_version
+from app_version import get_app_version, packaged_version_files
 
 VERSION = get_app_version()
 
@@ -36,6 +36,8 @@ if os.path.exists('config.py'):
     DATA_FILES.append('config.py')
 if os.path.exists('Astro_Sessions'):
     DATA_FILES.append('Astro_Sessions')
+for source, _dest in packaged_version_files():
+    DATA_FILES.append(source)
 
 setup(
     name="AstroDwarfScheduler",
