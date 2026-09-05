@@ -31,7 +31,11 @@ from dwarf_python_api.lib.dwarf_utils import perform_stop_autofocus
 from dwarf_python_api.lib.dwarf_utils import start_polar_align
 from dwarf_python_api.lib.dwarf_utils import stop_polar_align
 from dwarf_python_api.lib.dwarf_utils import perform_stop_calibration
-from dwarf_python_api.lib.dwarf_utils import perform_stop_motors
+try:
+    from dwarf_python_api.lib.dwarf_utils import perform_stop_motors
+except ImportError:
+    def perform_stop_motors():
+        return _compat_stop_motors()
 from dwarf_python_api.lib.dwarf_utils import perform_time
 from device_stop import stops_for, is_user_stop_result
 
@@ -192,6 +196,34 @@ def _wait_for_named_state(status_key, timeout=20, idle_names=("ASTRO_STATE_IDLE"
             return True
         time.sleep(0.4)
     return False
+
+
+def _compat_stop_motors():
+    """Stop rotation and pitch when bundled dwarf_python_api has no perform_stop_motors."""
+    try:
+        from dwarf_python_api.lib.websockets_utils import connect_socket
+        import dwarf_python_api.proto.motor_control_pb2 as motor
+        import dwarf_python_api.proto.protocol_pb2 as protocol
+    except ImportError:
+        return False
+    try:
+        from dwarf_python_api.lib.websockets_utils import STOP_CMD_TIMEOUT
+        timeout = STOP_CMD_TIMEOUT
+    except ImportError:
+        timeout = 8
+    command = getattr(protocol, "CMD_STEP_MOTOR_STOP", 14002)
+    module_id = getattr(protocol, "MODULE_MOTOR", 6)
+    confirmed = True
+    for motor_id in (1, 2):
+        message = motor.ReqMotorStop()
+        message.id = motor_id
+        try:
+            response = connect_socket(message, command, 0, module_id, timeout=timeout)
+        except TypeError:
+            response = connect_socket(message, command, 0, module_id)
+        if response is False:
+            confirmed = False
+    return confirmed
 
 
 def _stop_senders():

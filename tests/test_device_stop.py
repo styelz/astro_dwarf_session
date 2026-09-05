@@ -115,6 +115,16 @@ class StopTimeoutContractTests(unittest.TestCase):
         self.assertEqual(values["STOP_CMD_TIMEOUT"], 8)
         self.assertLess(values["STOP_CMD_TIMEOUT"], 20)
 
+    def test_stop_motors_import_is_optional(self):
+        from pathlib import Path
+
+        text = Path("dwarf_session.py").read_text(encoding="utf-8")
+        self.assertIn("from dwarf_python_api.lib.dwarf_utils import perform_stop_motors", text)
+        import_idx = text.index("from dwarf_python_api.lib.dwarf_utils import perform_stop_motors")
+        self.assertIn("try:", text[max(0, import_idx - 80):import_idx])
+        self.assertIn("except ImportError:", text[import_idx:import_idx + 200])
+        self.assertIn("def _compat_stop_motors(", text)
+
     def test_dwarf_utils_stop_calls_use_short_timeout(self):
         from pathlib import Path
 
