@@ -6,7 +6,7 @@ from tkinter import ttk
 from datetime import datetime
 
 from astro_dwarf_scheduler import LIST_ASTRO_DIR_DEFAULT
-from ui.theme import status_color, palette, style_listbox
+from ui.theme import status_color, palette, spacing, style_listbox, style_text
 from ui.widgets import card, section_header, hint_label
 
 def overview_session_tab(parent_frame, refresh_setter=None):
@@ -16,11 +16,16 @@ def overview_session_tab(parent_frame, refresh_setter=None):
     parent_frame.grid_columnconfigure(1, weight=2)
 
     list_card, list_inner = card(parent_frame)
-    list_card.grid(row=0, column=0, sticky="nsew", padx=(12, 8), pady=12)
+    list_card.grid(
+        row=0, column=0, sticky="nsew",
+        padx=(spacing["pad"], spacing["gutter"]), pady=spacing["pad"],
+    )
     list_inner.grid_rowconfigure(1, weight=1)
     list_inner.grid_columnconfigure(0, weight=1)
 
-    section_header(list_inner, "Available Sessions").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+    section_header(list_inner, "Available Sessions").grid(
+        row=0, column=0, columnspan=3, sticky="w", pady=(0, spacing["section"])
+    )
 
     json_listbox = tk.Listbox(list_inner, height=8, selectmode=tk.EXTENDED, relief="flat", highlightthickness=0)
     style_listbox(json_listbox)
@@ -30,30 +35,30 @@ def overview_session_tab(parent_frame, refresh_setter=None):
     json_listbox.configure(yscrollcommand=list_scroll.set)
 
     toolbar = ttk.Frame(list_inner, style="Card.TFrame")
-    toolbar.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+    toolbar.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(spacing["gap"], 0))
     toolbar.grid_columnconfigure(0, weight=1)
     toolbar.grid_columnconfigure(2, weight=1)
-    hint_label(toolbar, "Double click session names to toggle.").grid(row=0, column=0, sticky="e", padx=(0, 8))
+    hint_label(toolbar, "Double click session names to toggle.").grid(
+        row=0, column=0, sticky="e", padx=(0, spacing["gap"])
+    )
     select_button = ttk.Button(
         toolbar, text="Toggle Selected", command=lambda: select_session(json_listbox, json_text, select_button)
     )
-    select_button.grid(row=0, column=1, padx=8)
-    hint_label(toolbar, "Hold shift to select multiple sessions.").grid(row=0, column=2, sticky="w", padx=(8, 0))
+    select_button.grid(row=0, column=1, padx=spacing["gap"])
+    hint_label(toolbar, "Hold shift to select multiple sessions.").grid(
+        row=0, column=2, sticky="w", padx=(spacing["gap"], 0)
+    )
 
     detail_card, detail_inner = card(parent_frame)
-    detail_card.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=12)
+    detail_card.grid(row=0, column=1, sticky="nsew", padx=(0, spacing["pad"]), pady=spacing["pad"])
     detail_inner.grid_rowconfigure(1, weight=1)
     detail_inner.grid_columnconfigure(0, weight=1)
-    section_header(detail_inner, "Session details").grid(row=0, column=0, sticky="w", pady=(0, 8))
+    section_header(detail_inner, "Session details").grid(
+        row=0, column=0, sticky="w", pady=(0, spacing["section"])
+    )
 
     json_text = tk.Text(detail_inner, state=tk.DISABLED, relief="flat", highlightthickness=0)
-    json_text.configure(
-        bg=palette["input_bg"],
-        fg=palette["fg"],
-        insertbackground=palette["fg"],
-        selectbackground=palette["select_bg"],
-        selectforeground=palette["select_fg"],
-    )
+    style_text(json_text)
     json_text.grid(row=1, column=0, sticky="nsew")
     detail_scroll = ttk.Scrollbar(detail_inner, orient="vertical", command=json_text.yview)
     detail_scroll.grid(row=1, column=1, sticky="ns")

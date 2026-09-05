@@ -19,7 +19,7 @@ import threading
 from astro_dwarf_scheduler import BASE_DIR
 import configparser
 import sys
-from ui.theme import style_date_entry, apply_theme, load_appearance, palette, close_date_entry_popups
+from ui.theme import style_date_entry, apply_theme, load_appearance, palette, spacing, close_date_entry_popups, style_text
 from ui.widgets import card, section_header, hint_label, form_row
 
 def list_available_names(instance):
@@ -143,10 +143,10 @@ def create_mutually_exclusive_checkboxes(parent, var1, var2, var3, label1, label
 
     # Create a frame to contain the checkboxes
     check1 = ttk.Checkbutton(parent, text=label1, variable=var1, command=on_check1)
-    check1.pack(side=tk.LEFT, padx=(0, 8))
+    check1.pack(side=tk.LEFT, padx=(0, spacing["lg"]))
 
     check2 = ttk.Checkbutton(parent, text=label2, variable=var2, command=on_check2)
-    check2.pack(side=tk.LEFT, padx=(0, 8))
+    check2.pack(side=tk.LEFT, padx=(0, spacing["lg"]))
 
     check3 = ttk.Checkbutton(parent, text=label3, variable=var3, command=on_check3)
     check3.pack(side=tk.LEFT)
@@ -884,12 +884,13 @@ def show_preview_dialog(json_preview):
     setattr(preview_window, "confirmed", False)
 
     body, inner = card(preview_window)
-    body.pack(fill="both", expand=True, padx=12, pady=12)
+    body.pack(fill="both", expand=True, padx=spacing["pad"], pady=spacing["pad"])
     inner.grid_rowconfigure(1, weight=1)
     inner.grid_columnconfigure(0, weight=1)
-    section_header(inner, "Imported sessions").grid(row=0, column=0, sticky="w", pady=(0, 8))
+    section_header(inner, "Imported sessions").grid(row=0, column=0, sticky="w", pady=(0, spacing["section"]))
 
     text_widget = tk.Text(inner, wrap="word", height=20, width=50, relief="flat")
+    style_text(text_widget)
     text_widget.grid(row=1, column=0, sticky="nsew")
     preview_scroll = ttk.Scrollbar(inner, orient="vertical", command=text_widget.yview)
     preview_scroll.grid(row=1, column=1, sticky="ns")
@@ -900,9 +901,11 @@ def show_preview_dialog(json_preview):
     text_widget.config(state=tk.DISABLED)
 
     button_frame = ttk.Frame(inner, style="Card.TFrame")
-    button_frame.grid(row=2, column=0, columnspan=2, pady=(12, 0))
-    ttk.Button(button_frame, text="Confirm", style="Accent.TButton", command=lambda: on_confirm(preview_window)).pack(side=tk.LEFT, padx=5)
-    ttk.Button(button_frame, text="Cancel", command=lambda: on_cancel(preview_window)).pack(side=tk.LEFT, padx=5)
+    button_frame.grid(row=2, column=0, columnspan=2, pady=(spacing["lg"], 0))
+    ttk.Button(button_frame, text="Confirm", style="Accent.TButton", command=lambda: on_confirm(preview_window)).pack(
+        side=tk.LEFT, padx=(0, spacing["gap"])
+    )
+    ttk.Button(button_frame, text="Cancel", command=lambda: on_cancel(preview_window)).pack(side=tk.LEFT)
 
     preview_window.wait_window()
     return getattr(preview_window, "confirmed", False)
@@ -959,7 +962,11 @@ def create_session_tab(tab_create_session, settings_vars, config_vars):
     canvas.configure(yscrollcommand=scrollbar.set)
 
     def _on_canvas_configure(event):
-        canvas.itemconfig("frame", width=event.width)
+        canvas.itemconfig(
+            "frame",
+            width=event.width,
+            height=max(event.height, scrollable_frame.winfo_reqheight()),
+        )
         _sync_scrollbar()
 
     canvas.bind("<Configure>", _on_canvas_configure)
@@ -986,21 +993,23 @@ def create_session_tab(tab_create_session, settings_vars, config_vars):
         return var
 
     panels = ttk.Frame(scrollable_frame)
-    panels.pack(fill="x", padx=12, pady=12)
+    panels.pack(fill="x", padx=spacing["pad"], pady=spacing["pad"])
     panels.grid_columnconfigure(0, weight=1, uniform="panel")
     panels.grid_columnconfigure(1, weight=1, uniform="panel")
+    gutter = spacing["gutter"]
+    half_gutter = gutter // 2
 
     def make_card(title, row, column, span=1):
-        outer, inner = card(panels, padding=10)
+        outer, inner = card(panels)
         outer.grid(
             row=row,
             column=column,
             columnspan=span,
             sticky="nsew",
-            padx=(0, 4) if column == 0 and span == 1 else (4, 0) if span == 1 else 0,
-            pady=(0, 8),
+            padx=(0, half_gutter) if column == 0 and span == 1 else (half_gutter, 0) if span == 1 else 0,
+            pady=(0, gutter),
         )
-        section_header(inner, title).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        section_header(inner, title).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, spacing["section"]))
         inner.grid_columnconfigure(1, weight=1)
         return inner
 
@@ -1034,9 +1043,9 @@ def create_session_tab(tab_create_session, settings_vars, config_vars):
     settings_vars["infinite_focus"] = infinite_focus_var
     settings_vars["eq_solving"] = eq_solving_var
     settings_vars["calibration"] = calibration_var
-    ttk.Checkbutton(actions_frame, text="Auto Focus", variable=auto_focus_var).pack(side="left", padx=(0, 12))
-    ttk.Checkbutton(actions_frame, text="Infinite Focus", variable=infinite_focus_var).pack(side="left", padx=(0, 12))
-    ttk.Checkbutton(actions_frame, text="EQ Solving", variable=eq_solving_var).pack(side="left", padx=(0, 12))
+    ttk.Checkbutton(actions_frame, text="Auto Focus", variable=auto_focus_var).pack(side="left", padx=(0, spacing["lg"]))
+    ttk.Checkbutton(actions_frame, text="Infinite Focus", variable=infinite_focus_var).pack(side="left", padx=(0, spacing["lg"]))
+    ttk.Checkbutton(actions_frame, text="EQ Solving", variable=eq_solving_var).pack(side="left", padx=(0, spacing["lg"]))
     ttk.Checkbutton(actions_frame, text="Calibration", variable=calibration_var).pack(side="left")
     form_row(action_inner, 1, "ACTIONS", actions_frame)
     form_row(action_inner, 2, "Wait Before Action in s.", ttk.Entry(action_inner, textvariable=_var("wait_before", "10")))
@@ -1062,7 +1071,7 @@ def create_session_tab(tab_create_session, settings_vars, config_vars):
         text="Refresh from Stellarium",
         command=lambda: refresh_stellarium_data_in_background(settings_vars, config_vars, button=refresh_button),
     )
-    refresh_button.grid(row=0, column=1, padx=(8, 0))
+    refresh_button.grid(row=0, column=1, padx=(spacing["gap"], 0))
     form_row(target_inner, 3, "Manual Target", target_row)
     form_row(target_inner, 4, "RA (dec or HH:mm:ss.s)", ttk.Entry(target_inner, textvariable=_var("ra_coord")))
     form_row(target_inner, 5, "Dec (dec or ±DD:mm:ss.s)", ttk.Entry(target_inner, textvariable=_var("dec_coord")))
@@ -1107,23 +1116,27 @@ def create_session_tab(tab_create_session, settings_vars, config_vars):
     form_row(imaging_inner, 4, "Gain", gain_dropdown)
 
     save_inner = make_card("Save", 3, 1)
+    save_inner.grid_columnconfigure(0, weight=1)
+    save_inner.grid_rowconfigure(1, weight=1)
     ttk.Button(
         save_inner,
         text="Save",
         style="Accent.TButton",
         command=lambda: save_to_json(settings_vars, config_vars),
-    ).grid(row=1, column=0, columnspan=2, sticky="w")
+    ).grid(row=1, column=1, sticky="e")
 
     import_inner = make_card("Import CSV", 3, 0)
-    hint_label(
-        import_inner,
-        "Import Telescopius Mosaic or List CSV. Imported rows use your current settings.",
-    ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 8))
+    import_inner.grid_columnconfigure(0, weight=1)
+    import_inner.grid_rowconfigure(1, weight=1)
+    import_copy = ttk.Frame(import_inner, style="Card.TFrame")
+    hint_label(import_copy, "Import Telescopius Mosaic or List CSV.").pack(anchor="w")
+    hint_label(import_copy, "Imported rows use your current settings.").pack(anchor="w")
+    import_copy.grid(row=1, column=0, sticky="w")
     ttk.Button(
         import_inner,
         text="Import CSV",
         command=lambda: import_csv_and_generate_json(settings_vars, config_vars),
-    ).grid(row=2, column=0, sticky="w")
+    ).grid(row=1, column=1, sticky="e", padx=(spacing["gap"], 0))
 
     settings_vars["uuid"] = tk.StringVar()
     device_type = config.get("CONFIG", "device_type", fallback="Dwarf II")

@@ -22,15 +22,25 @@ FONT_SIZE_RANGES = {
     "hint": (7, 18),
 }
 
-PALETTES = {
+# Each appearance defines only the core tokens below. Everything else (log
+# colors, session status colors, links, countdowns) is derived in
+# _derive_palette so a status color can never drift between two call sites.
+#
+# Semantic colors come in pairs: `<name>` is a fill used behind `on_<name>`
+# text, and `<name>_text` is the higher-contrast variant for colored text on a
+# normal background. Using a fill color as text is what made light mode look
+# washed out, so the two roles are kept separate.
+_CORE_PALETTES = {
     "dark": {
         "bg": "#1D1D1B",
         "card": "#292927",
         "card_raised": "#31312F",
         "border": "#484846",
+        "border_strong": "#5A5A57",
         "fg": "#E8E8E4",
         "muted": "#A4A49C",
         "input_bg": "#222220",
+        "log_bg": "#222220",
         "input_fg": "#E8E8E4",
         "select_bg": "#6EA8FE",
         "select_fg": "#121211",
@@ -38,73 +48,84 @@ PALETTES = {
         "accent_fg": "#121211",
         "button_bg": "#353533",
         "button_active": "#40403E",
+        "hover_mix": "#FFFFFF",
+        "success": "#5DCA88",
+        "on_success": "#10130F",
+        "success_text": "#6ED89A",
+        "warning": "#E8A54B",
+        "on_warning": "#121211",
+        "warning_text": "#F0B563",
         "danger": "#E35D6A",
-        "danger_fg": "#FFFFFF",
+        "on_danger": "#FFFFFF",
+        "danger_text": "#F07C86",
+        "info": "#6EA8FE",
+        "on_info": "#121211",
+        "info_text": "#8FBEFF",
+        "progress": "#C084FC",
+        "on_progress": "#121211",
+        "progress_text": "#CDA0FD",
         "video_bg": "#151513",
         "tooltip_bg": "#31312F",
         "tooltip_fg": "#E8E8E4",
-        "log_error": "#E35D6A",
-        "log_warning": "#E8A54B",
-        "log_info": "#6EA8FE",
-        "log_success": "#5DCA88",
-        "log_default": "#E8E8E4",
-        "status_todo": "#6EA8FE",
-        "status_current": "#C084FC",
-        "status_done": "#5DCA88",
-        "status_error": "#E35D6A",
-        "status_results": "#A4A49C",
-        "status_main": "#E8E8E4",
-        "link": "#6EA8FE",
         "runtime": "#C5C5C0",
-        "countdown": "#6EA8FE",
         "row_alt": "#181816",
         "tree_heading": "#31312F",
     },
     "light": {
-        "bg": "#C9C8C4",
-        "card": "#DBDAD6",
-        "card_raised": "#E4E3DF",
-        "border": "#B0AFA9",
-        "fg": "#1E1E1C",
-        "muted": "#5C5B57",
-        "input_bg": "#EBEAE6",
-        "input_fg": "#1E1E1C",
+        "bg": "#C8C8C8",
+        "card": "#D9D9D9",
+        "card_raised": "#E2E2E2",
+        "border": "#ADADAD",
+        "border_strong": "#979797",
+        "fg": "#1E1E1E",
+        "muted": "#5A5A5A",
+        "input_bg": "#E9E9E9",
+        "log_bg": "#EFEFEF",
+        "input_fg": "#1E1E1E",
         "select_bg": "#3B6FE0",
         "select_fg": "#FFFFFF",
         "accent": "#3B6FE0",
         "accent_fg": "#FFFFFF",
-        "button_bg": "#CECDC9",
-        "button_active": "#B9B8B4",
+        "button_bg": "#CBCBCB",
+        "button_active": "#B6B6B6",
+        "hover_mix": "#FFFFFF",
+        "success": "#1E8A4C",
+        "on_success": "#FFFFFF",
+        "success_text": "#1E8A4C",
+        "warning": "#A86A10",
+        "on_warning": "#FFFFFF",
+        "warning_text": "#A86A10",
         "danger": "#C0392B",
-        "danger_fg": "#FFFFFF",
-        "video_bg": "#B6B5B1",
-        "tooltip_bg": "#2A2A28",
-        "tooltip_fg": "#E8E8E4",
-        "log_error": "#C0392B",
-        "log_warning": "#A86A10",
-        "log_info": "#2F5FC4",
-        "log_success": "#1E8A4C",
-        "log_default": "#1E1E1C",
-        "status_todo": "#2F6FED",
-        "status_current": "#7C3AED",
-        "status_done": "#1E8A4C",
-        "status_error": "#C0392B",
-        "status_results": "#5C5B57",
-        "status_main": "#1E1E1C",
-        "link": "#2F5FC4",
-        "runtime": "#3A3A38",
-        "countdown": "#0078D7",
-        "row_alt": "#D1D0CC",
-        "tree_heading": "#CECDC9",
+        "on_danger": "#FFFFFF",
+        "danger_text": "#C0392B",
+        "info": "#3B6FE0",
+        "on_info": "#FFFFFF",
+        "info_text": "#2F5FC4",
+        "progress": "#7C3AED",
+        "on_progress": "#FFFFFF",
+        "progress_text": "#7C3AED",
+        "video_bg": "#B3B3B3",
+        "tooltip_bg": "#2A2A2A",
+        "tooltip_fg": "#E8E8E8",
+        "runtime": "#3A3A3A",
+        "row_alt": "#CECECE",
+        "tree_heading": "#CBCBCB",
     },
+    # Redlight stays on a single red hue and encodes meaning through brightness,
+    # so nothing on screen can leak white or orange light. A pure-red ramp has a
+    # very narrow luminance range, so filled controls use a dark fill with bright
+    # red text rather than the reverse -- that is the only way to get readable
+    # contrast without a brighter, dark-adaptation-destroying block of color.
     "redlight": {
         "bg": "#0A0000",
         "card": "#140000",
         "card_raised": "#1C0000",
         "border": "#6B0000",
+        "border_strong": "#8F0000",
         "fg": "#C20000",
         "muted": "#7A0000",
         "input_bg": "#100000",
+        "log_bg": "#100000",
         "input_fg": "#C20000",
         "select_bg": "#7A0000",
         "select_fg": "#E00000",
@@ -112,29 +133,59 @@ PALETTES = {
         "accent_fg": "#0A0000",
         "button_bg": "#220000",
         "button_active": "#330000",
+        "hover_mix": "#E00000",
+        "success": "#220000",
+        "on_success": "#700000",
+        "success_text": "#700000",
+        "warning": "#220000",
+        "on_warning": "#A00000",
+        "warning_text": "#A00000",
         "danger": "#B00000",
-        "danger_fg": "#0A0000",
+        "on_danger": "#0A0000",
+        "danger_text": "#D00000",
+        "info": "#220000",
+        "on_info": "#9B0000",
+        "info_text": "#9B0000",
+        "progress": "#220000",
+        "on_progress": "#C20000",
+        "progress_text": "#C20000",
         "video_bg": "#050000",
         "tooltip_bg": "#1C0000",
         "tooltip_fg": "#C20000",
-        "log_error": "#D00000",
-        "log_warning": "#A00000",
-        "log_info": "#9B0000",
-        "log_success": "#700000",
-        "log_default": "#C20000",
-        "status_todo": "#9B0000",
-        "status_current": "#C20000",
-        "status_done": "#700000",
-        "status_error": "#D00000",
-        "status_results": "#7A0000",
-        "status_main": "#C20000",
-        "link": "#C20000",
         "runtime": "#A00000",
-        "countdown": "#9B0000",
         "row_alt": "#080000",
         "tree_heading": "#1C0000",
     },
 }
+
+# Domain name -> semantic role. Log levels and session pipeline states are the
+# app's own vocabulary, so they stay as names, but each one resolves to a single
+# semantic role rather than carrying its own hex value per appearance.
+_DERIVED_TOKENS = {
+    "log_error": "danger_text",
+    "log_warning": "warning_text",
+    "log_info": "info_text",
+    "log_success": "success_text",
+    "log_default": "fg",
+    "status_todo": "info_text",
+    "status_current": "progress_text",
+    "status_done": "success_text",
+    "status_error": "danger_text",
+    "status_results": "muted",
+    "status_main": "fg",
+    "link": "info_text",
+    "countdown": "info_text",
+}
+
+
+def _derive_palette(core):
+    resolved = dict(core)
+    for alias, source in _DERIVED_TOKENS.items():
+        resolved[alias] = core[source]
+    return resolved
+
+
+PALETTES = {name: _derive_palette(core) for name, core in _CORE_PALETTES.items()}
 
 STATUS_KEYS = {
     "ToDo": "status_todo",
@@ -155,11 +206,28 @@ fonts = {
     "log": ("Segoe UI Emoji", DEFAULT_FONT_SIZES["body"]) if sys.platform == "win32" else (DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZES["body"]),
 }
 
+# One 4px scale drives every gap in the app. Named roles below map onto it so
+# call sites ask for a role ("row", "gutter") rather than picking a number.
 spacing = {
-    "pad": 12,
-    "gap": 8,
-    "card": 12,
+    "xs": 2,
+    "sm": 4,
+    "md": 8,
+    "lg": 12,
+    "xl": 16,
+    "pad": 12,        # page margin around a tab's content
+    "gap": 8,         # generic gap between sibling controls
+    "card": 12,       # card inner padding
+    "gutter": 8,      # between adjacent cards
+    "row": 4,         # vertical rhythm between form rows
+    "label_gap": 8,   # between a field label and its control
+    "section": 8,     # below a section header
 }
+
+# Component padding. Buttons and fields share a vertical value so a button next
+# to an entry lines up without per-call-site nudging.
+CONTROL_PADDING = (12, 6)
+COMPACT_PADDING = (8, 3)
+FIELD_PADDING = (6, 4)
 
 mode = DEFAULT_MODE
 palette = PALETTES[DEFAULT_MODE].copy()
@@ -354,6 +422,107 @@ def status_color(name):
     return palette.get(key, palette["fg"])
 
 
+def _mix_hex(color, other, amount):
+    color = str(color).lstrip("#")
+    other = str(other).lstrip("#")
+    channels = []
+    for index in (0, 2, 4):
+        base = int(color[index:index + 2], 16)
+        mix = int(other[index:index + 2], 16)
+        channels.append(max(0, min(255, int(base + (mix - base) * amount))))
+    return "#{:02X}{:02X}{:02X}".format(*channels)
+
+
+def _hover_fill(color, appearance):
+    """Lighten a fill toward the palette's own highlight anchor.
+
+    Redlight anchors on bright red instead of white so hover cannot introduce
+    green or blue light.
+    """
+    anchor = palette.get("hover_mix", "#FFFFFF")
+    return _mix_hex(color, anchor, 0.22 if appearance == "light" else 0.28)
+
+
+def _pressed_fill(color, appearance):
+    return _mix_hex(color, "#000000", 0.18 if appearance == "light" else 0.22)
+
+
+def _colored_button_fill(fill, appearance):
+    """Redlight filled buttons use a dimmer red than the shared accent token."""
+    if appearance != "redlight":
+        return fill
+    return _mix_hex(fill, "#000000", 0.42)
+
+
+def _configure_colored_button(style, name, fill, fg, appearance, padding=CONTROL_PADDING, disabled_bg=None):
+    """Clam needs lightcolor/darkcolor mapped or hover never shows on filled buttons."""
+    hover = _hover_fill(fill, appearance)
+    pressed = _pressed_fill(fill, appearance)
+    disabled = disabled_bg if disabled_bg is not None else palette["card"]
+    style.configure(
+        name,
+        background=fill,
+        foreground=fg,
+        bordercolor=fill,
+        lightcolor=fill,
+        darkcolor=fill,
+        padding=padding,
+        font=fonts["body"],
+    )
+    style.map(
+        name,
+        background=[("disabled", disabled), ("pressed", pressed), ("active", hover)],
+        lightcolor=[("disabled", disabled), ("pressed", pressed), ("active", hover)],
+        darkcolor=[("disabled", disabled), ("pressed", pressed), ("active", hover)],
+        bordercolor=[("disabled", palette["border"]), ("pressed", pressed), ("active", hover)],
+        foreground=[("disabled", palette["muted"])],
+    )
+
+
+def _configure_toggle(style, widget_class, p):
+    """Theme checkbox/radio indicators instead of leaving the clam white box."""
+    style.configure(
+        widget_class,
+        background=p["card"],
+        foreground=p["fg"],
+        font=fonts["body"],
+        indicatorbackground=p["input_bg"],
+        indicatorforeground=p["accent_fg"],
+        upperbordercolor=p["border"],
+        lowerbordercolor=p["border"],
+        focuscolor=p["accent"],
+        focusthickness=1,
+    )
+    style.map(
+        widget_class,
+        background=[("active", p["card"])],
+        foreground=[("disabled", p["muted"])],
+        indicatorbackground=[
+            ("disabled", "selected", p["muted"]),
+            ("disabled", p["card"]),
+            ("pressed", p["button_active"]),
+            ("active", "selected", p["countdown"]),
+            ("selected", p["accent"]),
+            ("active", p["card_raised"]),
+        ],
+        indicatorforeground=[
+            ("disabled", p["muted"]),
+            ("selected", p["accent_fg"]),
+            ("!selected", p["input_fg"]),
+        ],
+        upperbordercolor=[
+            ("disabled", p["border"]),
+            ("selected", p["accent"]),
+            ("active", p["accent"]),
+        ],
+        lowerbordercolor=[
+            ("disabled", p["border"]),
+            ("selected", p["accent"]),
+            ("active", p["accent"]),
+        ],
+    )
+
+
 def apply_theme(root, appearance=None):
     """Apply ttk styles and restyle leftover tk widgets."""
     global mode, palette
@@ -405,62 +574,95 @@ def apply_theme(root, appearance=None):
     style.configure("Muted.TLabel", background=p["card"], foreground=p["muted"], font=fonts["hint"])
     style.configure("Link.TLabel", background=p["card"], foreground=p["link"], font=(font_family, _body_font_size(), "underline"))
 
+    # Secondary (default) buttons are deliberately quiet: a fill only a step off
+    # the card, a flat 1px rim, and no bevel. Weight comes from the border on
+    # hover instead of a brighter fill, so a row of them cannot out-shout the
+    # one accent button on the same card.
     style.configure(
         "TButton",
         background=p["button_bg"],
         foreground=p["fg"],
         bordercolor=p["border"],
         lightcolor=p["button_bg"],
-        darkcolor=p["border"],
+        darkcolor=p["button_bg"],
         focusthickness=1,
         focuscolor=p["accent"],
-        padding=(10, 6),
+        padding=CONTROL_PADDING,
         font=fonts["body"],
+        anchor="center",
     )
     style.map(
         "TButton",
-        background=[("active", p["button_active"]), ("disabled", p["card"])],
+        background=[("disabled", p["card"]), ("pressed", p["border"]), ("active", p["button_active"])],
+        lightcolor=[("disabled", p["card"]), ("pressed", p["border"]), ("active", p["button_active"])],
+        darkcolor=[("disabled", p["card"]), ("pressed", p["border"]), ("active", p["button_active"])],
+        bordercolor=[("disabled", p["border"]), ("active", p["border_strong"])],
         foreground=[("disabled", p["muted"])],
     )
-    style.configure(
-        "Accent.TButton",
-        background=p["accent"],
-        foreground=p["accent_fg"],
-        bordercolor=p["accent"],
-        lightcolor=p["accent"],
-        darkcolor=p["accent"],
-        padding=(10, 6),
-        font=fonts["body"],
+    _configure_colored_button(
+        style, "Accent.TButton", _colored_button_fill(p["accent"], appearance), p["accent_fg"], appearance
     )
-    style.map("Accent.TButton", background=[("active", p["countdown"]), ("disabled", p["card"])])
-    style.configure(
-        "Danger.TButton",
-        background=p["danger"],
-        foreground=p["danger_fg"],
-        bordercolor=p["danger"],
-        lightcolor=p["danger"],
-        darkcolor=p["danger"],
-        padding=(10, 6),
-        font=fonts["body"],
+    _configure_colored_button(
+        style, "Danger.TButton", _colored_button_fill(p["danger"], appearance), p["on_danger"], appearance
     )
-    style.map("Danger.TButton", background=[("active", p["status_error"]), ("disabled", p["card"])])
-    style.configure("Compact.TButton", padding=(6, 2), font=fonts["body"])
+    _configure_colored_button(style, "Success.TButton", p["success"], p["on_success"], appearance)
+    # Wait is a status readout rendered as a button, so it must not react to hover.
     style.configure(
+        "Wait.TButton",
+        background=p["warning"],
+        foreground=p["on_warning"],
+        bordercolor=p["warning"],
+        lightcolor=p["warning"],
+        darkcolor=p["warning"],
+        padding=CONTROL_PADDING,
+        font=fonts["body"],
+        anchor="center",
+    )
+    style.map(
+        "Wait.TButton",
+        background=[("disabled", p["warning"]), ("active", p["warning"])],
+        lightcolor=[("disabled", p["warning"]), ("active", p["warning"])],
+        darkcolor=[("disabled", p["warning"]), ("active", p["warning"])],
+        foreground=[("disabled", p["on_warning"])],
+    )
+    style.configure("Compact.TButton", padding=COMPACT_PADDING, font=fonts["body"], anchor="center")
+    _configure_colored_button(
+        style,
         "CompactAccent.TButton",
-        background=p["accent"],
-        foreground=p["accent_fg"],
-        bordercolor=p["accent"],
-        lightcolor=p["accent"],
-        darkcolor=p["accent"],
-        padding=(6, 2),
-        font=fonts["body"],
+        _colored_button_fill(p["accent"], appearance),
+        p["accent_fg"],
+        appearance,
+        padding=COMPACT_PADDING,
     )
-    style.map("CompactAccent.TButton", background=[("active", p["countdown"]), ("disabled", p["card"])])
+    _configure_colored_button(
+        style,
+        "CompactDanger.TButton",
+        _colored_button_fill(p["danger"], appearance),
+        p["on_danger"],
+        appearance,
+        padding=COMPACT_PADDING,
+    )
+    style.configure(
+        "CompactWait.TButton",
+        background=p["warning"],
+        foreground=p["on_warning"],
+        bordercolor=p["warning"],
+        lightcolor=p["warning"],
+        darkcolor=p["warning"],
+        padding=COMPACT_PADDING,
+        font=fonts["body"],
+        anchor="center",
+    )
+    style.map(
+        "CompactWait.TButton",
+        background=[("disabled", p["warning"]), ("active", p["warning"])],
+        lightcolor=[("disabled", p["warning"]), ("active", p["warning"])],
+        darkcolor=[("disabled", p["warning"]), ("active", p["warning"])],
+        foreground=[("disabled", p["on_warning"])],
+    )
 
-    style.configure("TCheckbutton", background=p["card"], foreground=p["fg"], font=fonts["body"])
-    style.map("TCheckbutton", background=[("active", p["card"])], foreground=[("disabled", p["muted"])])
-    style.configure("TRadiobutton", background=p["card"], foreground=p["fg"], font=fonts["body"])
-    style.map("TRadiobutton", background=[("active", p["card"])], foreground=[("disabled", p["muted"])])
+    _configure_toggle(style, "TCheckbutton", p)
+    _configure_toggle(style, "TRadiobutton", p)
 
     style.configure(
         "TEntry",
@@ -474,15 +676,29 @@ def apply_theme(root, appearance=None):
         selectforeground=p["select_fg"],
         focusthickness=1,
         focuscolor=p["accent"],
-        padding=4,
+        padding=FIELD_PADDING,
         font=fonts["body"],
     )
     style.map(
         "TEntry",
-        fieldbackground=[("disabled", p["card"])],
-        foreground=[("disabled", p["muted"])],
-        selectbackground=[("!focus", p["input_bg"]), ("focus", p["select_bg"])],
-        selectforeground=[("!focus", p["input_fg"]), ("focus", p["select_fg"])],
+        fieldbackground=[
+            ("disabled", p["card"]),
+            ("readonly", p["input_bg"]),
+        ],
+        foreground=[
+            ("disabled", p["muted"]),
+            ("readonly", p["input_fg"]),
+        ],
+        selectbackground=[
+            ("readonly", p["input_bg"]),
+            ("!focus", p["input_bg"]),
+            ("focus", p["select_bg"]),
+        ],
+        selectforeground=[
+            ("readonly", p["input_fg"]),
+            ("!focus", p["input_fg"]),
+            ("focus", p["select_fg"]),
+        ],
         bordercolor=[("focus", p["accent"])],
         lightcolor=[("focus", p["accent"])],
         darkcolor=[("focus", p["accent"])],
@@ -501,7 +717,7 @@ def apply_theme(root, appearance=None):
         selectforeground=p["select_fg"],
         focusthickness=1,
         focuscolor=p["accent"],
-        padding=4,
+        padding=FIELD_PADDING,
         font=fonts["body"],
     )
     style.map(
@@ -547,7 +763,7 @@ def apply_theme(root, appearance=None):
         arrowcolor=p["fg"],
         selectbackground=p["select_bg"],
         selectforeground=p["select_fg"],
-        padding=4,
+        padding=FIELD_PADDING,
         font=fonts["body"],
     )
     style.map(
@@ -668,6 +884,7 @@ def apply_theme(root, appearance=None):
 
     _walk_tk_widgets(root)
     _install_input_selection_behavior(root)
+    install_disabled_pointer(root)
     apply_native_frame_colors(root, appearance)
     try:
         if root.winfo_class() == "Toplevel":
@@ -826,6 +1043,13 @@ _BACKGROUND_CLASSES = {
     "TFrame", "Frame", "TLabel", "Label", "Toplevel", "Canvas",
     "TNotebook", "Labelframe",
 }
+# Clickable controls that should show the platform "not allowed" cursor when
+# they cannot be used. Tk's `no` cursor is the circle-with-slash on Windows.
+_POINTER_CLASSES = {
+    "TButton", "Button", "TCheckbutton", "Checkbutton",
+    "TRadiobutton", "Radiobutton", "TMenubutton", "Menubutton",
+}
+FORBIDDEN_CURSOR_CANDIDATES = ("no", "circle", "X_cursor")
 
 
 def style_treeview_rows(treeview):
@@ -893,6 +1117,16 @@ def _widget_from_event(event, root):
         except (KeyError, tk.TclError):
             return None
     return widget
+
+
+def _widget_containing(root, x, y):
+    """Return the widget at screen coords, or None for Tk-only popdowns."""
+    try:
+        return root.winfo_containing(x, y)
+    except (KeyError, tk.TclError):
+        # ttk Combobox list windows are named "popdown" in Tk but are not
+        # registered in Python's children map, so nametowidget raises KeyError.
+        return None
 
 
 def _is_in_date_popup(widget):
@@ -996,12 +1230,216 @@ def _install_input_selection_behavior(root):
     root.bind_all("<Button-1>", on_background_click, add="+")
 
 
+def forbidden_cursor_name(widget=None):
+    """Platform cursor for a control that cannot be clicked.
+
+    Windows maps Tk's `no` cursor to the circle-with-slash (IDC_NO).
+    """
+    probe = None
+    if widget is not None:
+        try:
+            probe = widget.nametowidget(".")
+        except tk.TclError:
+            probe = widget
+    if probe is None:
+        try:
+            probe = tk._get_default_root()
+        except Exception:
+            probe = None
+    cached = getattr(probe, "_forbidden_cursor_name", None) if probe is not None else None
+    if cached:
+        return cached
+    for name in FORBIDDEN_CURSOR_CANDIDATES:
+        if probe is None:
+            return name
+        try:
+            previous = str(probe.cget("cursor") or "")
+        except tk.TclError:
+            previous = ""
+        try:
+            probe.configure(cursor=name)
+            probe.configure(cursor=previous)
+            probe._forbidden_cursor_name = name
+            return name
+        except tk.TclError:
+            try:
+                probe.configure(cursor=previous)
+            except tk.TclError:
+                pass
+    if probe is not None:
+        probe._forbidden_cursor_name = ""
+    return ""
+
+
+def control_is_unclickable(widget):
+    """True when a button-like control should not accept clicks."""
+    if widget is None or isinstance(widget, str):
+        return False
+    try:
+        cls = widget.winfo_class()
+    except tk.TclError:
+        return False
+    if cls not in _POINTER_CLASSES:
+        return False
+    if getattr(widget, "_pointer_blocked", False):
+        return True
+    instate = getattr(widget, "instate", None)
+    if callable(instate):
+        try:
+            return bool(instate(["disabled"]))
+        except tk.TclError:
+            pass
+    try:
+        return str(widget.cget("state")).lower() == "disabled"
+    except tk.TclError:
+        return False
+
+
+def _sync_widget_pointer(widget):
+    """Keep a control's cursor in sync with whether it can be clicked."""
+    if widget is None or isinstance(widget, str):
+        return
+    try:
+        cls = widget.winfo_class()
+    except tk.TclError:
+        return
+    if cls not in _POINTER_CLASSES:
+        return
+    blocked = control_is_unclickable(widget)
+    forbidden = forbidden_cursor_name(widget)
+    try:
+        current = str(widget.cget("cursor") or "")
+    except tk.TclError:
+        return
+    if blocked:
+        if current != forbidden:
+            widget._pointer_restored_cursor = current
+        if current != forbidden:
+            try:
+                widget.configure(cursor=forbidden)
+            except tk.TclError:
+                pass
+        return
+    restored = getattr(widget, "_pointer_restored_cursor", None)
+    if restored is None:
+        restored = "" if current == forbidden else current
+    widget._pointer_restored_cursor = restored
+    if current != restored:
+        try:
+            widget.configure(cursor=restored)
+        except tk.TclError:
+            pass
+
+
+def set_pointer_blocked(widget, blocked):
+    """Mark a control unclickable without changing ttk disabled styling."""
+    if widget is None:
+        return
+    widget._pointer_blocked = bool(blocked)
+    _sync_widget_pointer(widget)
+
+
+def refresh_disabled_pointer(root):
+    """Update the forbidden cursor for the control currently under the pointer."""
+    if root is None:
+        return
+    try:
+        x, y = root.winfo_pointerxy()
+        widget = _widget_containing(root, x, y)
+        top = widget.winfo_toplevel() if widget is not None else root.winfo_toplevel()
+    except (tk.TclError, KeyError):
+        return
+    blocked = control_is_unclickable(widget)
+    if getattr(top, "_forbidden_pointer_active", None) != blocked:
+        top._forbidden_pointer_active = blocked
+        cursor = forbidden_cursor_name(top) if blocked else ""
+        try:
+            top.configure(cursor=cursor)
+        except tk.TclError:
+            pass
+    if widget is not None:
+        _sync_widget_pointer(widget)
+
+
+def install_disabled_pointer(root):
+    """Show the not-allowed cursor over button-like controls that cannot be clicked."""
+    try:
+        app = root.nametowidget(".")
+    except tk.TclError:
+        app = root
+    if getattr(app, "_disabled_pointer_installed", False):
+        return
+    app._disabled_pointer_installed = True
+    forbidden_cursor_name(app)
+    _patch_widget_pointer_configure()
+
+    def on_enter(event):
+        widget = _widget_from_event(event, app)
+        _sync_widget_pointer(widget)
+        refresh_disabled_pointer(app)
+
+    def on_motion(_event):
+        refresh_disabled_pointer(app)
+
+    for class_name in _POINTER_CLASSES:
+        app.bind_class(class_name, "<Enter>", on_enter, add="+")
+    app.bind_all("<Motion>", on_motion, add="+")
+
+
+_POINTER_CONFIGURE_PATCHED = False
+
+
+def _patch_widget_pointer_configure():
+    """Keep the forbidden cursor in sync whenever a control's state changes."""
+    global _POINTER_CONFIGURE_PATCHED
+    if _POINTER_CONFIGURE_PATCHED:
+        return
+    _POINTER_CONFIGURE_PATCHED = True
+
+    def wrap(cls):
+        original = cls.configure
+
+        def configure(self, cnf=None, **kw):
+            if isinstance(cnf, str) and not kw:
+                return original(self, cnf)
+            result = original(self, cnf, **kw)
+            keys = kw
+            if isinstance(cnf, dict):
+                keys = {**cnf, **kw}
+            if keys and "state" in keys:
+                _sync_widget_pointer(self)
+            return result
+
+        cls.configure = configure
+        cls.config = configure
+
+    wrap(ttk.Widget)
+    wrap(tk.Button)
+    wrap(tk.Checkbutton)
+    wrap(tk.Radiobutton)
+
+    def wrap_init(cls):
+        original = cls.__init__
+
+        def init(self, *args, **kwargs):
+            original(self, *args, **kwargs)
+            _sync_widget_pointer(self)
+
+        cls.__init__ = init
+
+    for widget_cls in (
+        ttk.Button, ttk.Checkbutton, ttk.Radiobutton, ttk.Menubutton,
+        tk.Button, tk.Checkbutton, tk.Radiobutton,
+    ):
+        wrap_init(widget_cls)
+
+
 def style_log_text(widget):
     """Apply palette colors to a log Text widget and its level tags."""
     p = palette
     try:
         widget.configure(
-            bg=p["input_bg"],
+            bg=p["log_bg"],
             fg=p["log_default"],
             insertbackground=p["fg"],
             selectbackground=p["select_bg"],
@@ -1022,6 +1460,29 @@ def style_log_text(widget):
         widget.tag_config("blue", foreground=p["log_info"])
         widget.tag_config("green", foreground=p["log_success"])
         widget.tag_config("black", foreground=p["log_default"])
+    except tk.TclError:
+        pass
+
+
+def style_text(widget, tone=None):
+    """Apply palette colors to a plain Text panel.
+
+    `tone` picks a semantic text color (e.g. "danger") for panels whose whole
+    content carries a status; omit it for normal body text.
+    """
+    p = palette
+    foreground = p.get(f"{tone}_text", p["fg"]) if tone else p["fg"]
+    try:
+        widget.configure(
+            bg=p["input_bg"],
+            fg=foreground,
+            insertbackground=p["fg"],
+            selectbackground=p["select_bg"],
+            selectforeground=p["select_fg"],
+            highlightthickness=0,
+            borderwidth=0,
+            font=fonts["body"],
+        )
     except tk.TclError:
         pass
 
@@ -1118,6 +1579,7 @@ def _style_tk_widget(widget):
         sync_treeview_selection(widget)
         return
     if cls in _TTK_CLASSES:
+        _sync_widget_pointer(widget)
         return
 
     p = palette
@@ -1128,6 +1590,26 @@ def _style_tk_widget(widget):
     try:
         if role == "video":
             widget.configure(bg=p["video_bg"], fg=p["muted"])
+            return
+        if role == "video_overlay":
+            try:
+                widget.configure(
+                    bg=p["card"],
+                    highlightbackground=p["border"],
+                    highlightcolor=p["border"],
+                )
+            except tk.TclError:
+                try:
+                    widget.configure(bg=p["card"])
+                except tk.TclError:
+                    pass
+            try:
+                widget.configure(fg=p["fg"])
+            except tk.TclError:
+                pass
+            redraw = getattr(widget, "_redraw_theme", None)
+            if callable(redraw):
+                redraw()
             return
         if role == "log":
             style_log_text(widget)
@@ -1160,6 +1642,11 @@ def _style_tk_widget(widget):
                 highlightbackground=p["bg"],
                 bd=0,
             )
+            # The tab owns its own font/padding (hover bolds the label), so let it
+            # restate them after the generic font pass above.
+            repaint = getattr(widget, "_tab_repaint", None)
+            if callable(repaint):
+                repaint()
             return
         if role == "tab_underline":
             selected = getattr(widget, "_tab_selected", False)
@@ -1205,7 +1692,7 @@ def _style_tk_widget(widget):
                 fg=p["fg"],
                 activebackground=p["card"],
                 activeforeground=p["fg"],
-                selectcolor=p["input_bg"],
+                selectcolor=p["accent"],
                 highlightbackground=p["bg"],
             )
         elif cls == "Radiobutton":
@@ -1213,7 +1700,7 @@ def _style_tk_widget(widget):
                 bg=p["card"],
                 fg=p["fg"],
                 activebackground=p["card"],
-                selectcolor=p["input_bg"],
+                selectcolor=p["accent"],
             )
         elif cls == "Text":
             widget.configure(
@@ -1281,6 +1768,11 @@ def _apply_widget_font(widget, role=None):
 def _parent_is_card(widget):
     try:
         parent = widget.nametowidget(widget.winfo_parent())
-        return getattr(parent, "_theme_role", None) == "card" or parent.winfo_class() == "TFrame"
+        if getattr(parent, "_theme_role", None) == "card":
+            return True
+        try:
+            return str(parent.cget("style") or "") == "Card.TFrame"
+        except tk.TclError:
+            return False
     except (tk.TclError, KeyError):
         return False

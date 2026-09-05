@@ -15,12 +15,22 @@
 - **Connection setup**: Location is applied on connect.
 - **EQ solving**: Force an infinite autofocus before EQ solving.
 - **Wide captures**: Re-enter Astro/DSO mode before wide-lens captures.
-- **Live preview**: Video preview stays in sync while sessions are running.
+- **Live preview quality**: RTSP preview is decoded to uncompressed frames with no extra JPEG encode from the app. HTTP MJPEG from the telescope is shown as received.
+- **Light-theme log**: The main-page log window is a light grey, slightly off white.
+- **Live preview lens**: Hover the live preview to show a small lens icon in the bottom-right corner; it switches between telephoto (`ch0`) and wide (`ch1`).
+- **Live preview starting state**: The preview shows “Starting stream, please wait” while the live stream is connecting.
+- **Live preview expand**: Hover the live stream to show fill-window and full-screen controls after the telescope is connected. Maximize fills the current app window (not the monitor); full screen covers the display. Both keep the stream’s aspect ratio. Hover an expanded view to restore or switch. Overlay buttons hide after 3 seconds without mouse movement and return when the mouse moves.
+- **Stop Session wait state**: The button uses a distinct wait colour while it shows “Stopping, please wait”. While a session or main-page task is running, only Stop Scheduler and Stop Session stay clickable.
+- **External stream URL**: Double-clicking the live preview shows the RTSP/HTTP URL in a dialog so it can be copied into VLC, instead of asking Windows to open RTSP.
 - **Device IDs**: Dwarf ID checks updated for current device support.
 
 ### Bug Fixes
+- **Settings page background**: Enlarging the window no longer leaves a different-coloured strip below the Settings (and Create Session) page. Page canvases keep the window background instead of the card colour.
+- **Live preview responsiveness**: The UI no longer queues every decoded frame. RTSP is scaled and rate-limited in ffmpeg, frames are decoded off the UI thread, and only the latest frame is painted, so the rest of the app stays usable while the stream is running.
+- **Toggle lights**: Light on/off is read when the scope connects, so the button turns lights off if they are already on (and on if they are off).
 - **Windows installer launch**: The GUI no longer fails to start with `ImportError: cannot import name 'request_command_interrupt'` when the bundled `dwarf_python_api` does not provide that helper.
 - **Timezone on connect**: Dwarf 3 firmware returns `-13301` for `SET_TIME_ZONE` with every timezone ID tested (including documented IANA names such as `Europe/Paris`). Connect no longer sends that command or logs it as an error. Clock offset is still applied by `SET_TIME`.
+- **Stop Scheduler with live preview**: Stopping the scheduler while a stream is running no longer sends a stray GOTO-stop or waits forever on ffmpeg/disconnect, which could freeze the app until it was force-closed.
 
 ### Packaging
 - **Single version source**: Apps, Windows installer, and GitHub releases now share one version from `CHANGELOG.md` (or `APP_VERSION`).

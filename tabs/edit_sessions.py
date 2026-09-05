@@ -5,7 +5,7 @@ from tkinter import ttk, messagebox
 import re
 from astro_dwarf_scheduler import get_json_files_sorted
 import time
-from ui.theme import palette, style_listbox
+from ui.theme import palette, spacing, style_listbox
 from ui.widgets import card, section_header, hint_label
 
 def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
@@ -14,10 +14,15 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     parent_tab.grid_columnconfigure(1, weight=3)
 
     list_card, list_inner = card(parent_tab)
-    list_card.grid(row=0, column=0, sticky="nsew", padx=(12, 8), pady=12)
+    list_card.grid(
+        row=0, column=0, sticky="nsew",
+        padx=(spacing["pad"], spacing["gutter"]), pady=spacing["pad"],
+    )
     list_inner.grid_rowconfigure(1, weight=1)
     list_inner.grid_columnconfigure(0, weight=1)
-    section_header(list_inner, "Available Sessions").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+    section_header(list_inner, "Available Sessions").grid(
+        row=0, column=0, columnspan=2, sticky="w", pady=(0, spacing["section"])
+    )
 
     listbox = tk.Listbox(list_inner, width=32, height=12, selectmode=tk.EXTENDED, relief="flat", highlightthickness=0)
     style_listbox(listbox)
@@ -27,10 +32,12 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     listbox.config(yscrollcommand=scrollbar.set)
 
     form_card, form_wrap = card(parent_tab)
-    form_card.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=12)
+    form_card.grid(row=0, column=1, sticky="nsew", padx=(0, spacing["pad"]), pady=spacing["pad"])
     form_wrap.grid_rowconfigure(1, weight=1)
     form_wrap.grid_columnconfigure(0, weight=1)
-    section_header(form_wrap, "Session editor").grid(row=0, column=0, sticky="w", pady=(0, 8))
+    section_header(form_wrap, "Session editor").grid(
+        row=0, column=0, sticky="w", pady=(0, spacing["section"])
+    )
 
     form_canvas = tk.Canvas(form_wrap, borderwidth=0, highlightthickness=0, bg=palette["card"])
     form_canvas.grid(row=1, column=0, sticky="nsew")
@@ -164,16 +171,16 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
 
         # Add Reset button at the top
         header_frame = ttk.Frame(form_frame, style="Card.TFrame")
-        header_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, 5))
+        header_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, spacing["sm"]))
         ttk.Label(header_frame, text="Session Info", style="Subheading.TLabel").grid(row=0, column=0, sticky="w")
         row += 1
 
         # Build id_command fields
         for key in ["description", "date", "time", "process", "max_retries", "result", "message", "nb_try"]:
             label = ttk.Label(form_frame, text=key + ":", style="Card.TLabel")
-            label.grid(row=row, column=0, sticky="e", padx=(5, 10), pady=(2, 2))
+            label.grid(row=row, column=0, sticky="e", padx=(0, spacing["label_gap"]), pady=spacing["row"])
             ent = ttk.Entry(form_frame)
-            ent.grid(row=row, column=1, sticky="ew", padx=(5, 10), pady=(2, 2))
+            ent.grid(row=row, column=1, sticky="ew", padx=(0, spacing["sm"]), pady=spacing["row"])
             entries[('id_command', key)] = ent
             form_widgets[('id_command', key)] = (label, ent)
             ent.bind('<KeyRelease>', lambda e: mark_changed())
@@ -209,15 +216,15 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
             if not sub:  # Skip if subcmd doesn't exist
                 continue
             label = ttk.Label(form_frame, text=subcmd, style="Subheading.TLabel")
-            label.grid(row=row, column=0, sticky="w", pady=(10, 0))
+            label.grid(row=row, column=0, sticky="w", pady=(spacing["lg"], 0))
             form_widgets[f'{subcmd}_header'] = label
             row += 1
             for k, v in sub.items():
                 sub_label = ttk.Label(form_frame, text=k + ":", style="Card.TLabel")
-                sub_label.grid(row=row, column=0, sticky="e", padx=(5, 5), pady=(2, 2))
+                sub_label.grid(row=row, column=0, sticky="e", padx=(0, spacing["label_gap"]), pady=spacing["row"])
                 if k == 'do_action':
                     combo = ttk.Combobox(form_frame, values=["True", "False"], state="readonly")
-                    combo.grid(row=row, column=1, sticky="ew", padx=(5, 10), pady=(2, 2))  # Make the combobox stretchable
+                    combo.grid(row=row, column=1, sticky="ew", padx=(0, spacing["sm"]), pady=spacing["row"])  # Make the combobox stretchable
                     entries[(subcmd, k)] = combo
                     form_widgets[(subcmd, k)] = (sub_label, combo)
                     combo.bind('<<ComboboxSelected>>', lambda e: mark_changed())
@@ -229,7 +236,7 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
                     combo.bind('<Button-5>', block_mousewheel)
                 else:
                     ent = ttk.Entry(form_frame)
-                    ent.grid(row=row, column=1, sticky="ew", padx=(5, 15), pady=(2, 2))  # Make the entry stretchable
+                    ent.grid(row=row, column=1, sticky="ew", padx=(0, spacing["sm"]), pady=spacing["row"])  # Make the entry stretchable
                     entries[(subcmd, k)] = ent
                     form_widgets[(subcmd, k)] = (sub_label, ent)
                     ent.bind('<KeyRelease>', lambda e: mark_changed())
@@ -375,8 +382,11 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
     
     refresh_list()
 
-    button_card, button_frame = card(parent_tab, padding=8)
-    button_card.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 12))
+    button_card, button_frame = card(parent_tab, padding=spacing["md"])
+    button_card.grid(
+        row=1, column=0, columnspan=2, sticky="ew",
+        padx=spacing["pad"], pady=(0, spacing["pad"]),
+    )
 
     def delete_selected_files():
         # Save before deleting
@@ -405,10 +415,10 @@ def edit_sessions_tab(parent_tab, session_dir, refresh_callback=None):
             messagebox.showerror("Delete Error", "Some files could not be deleted:\n" + '\n'.join(errors))
 
     delete_btn = ttk.Button(button_frame, text="Delete File(s)", command=delete_selected_files, style="Danger.TButton")
-    delete_btn.pack(side=tk.LEFT, padx=(0, 8))
+    delete_btn.pack(side=tk.LEFT, padx=(0, spacing["gap"]))
     refresh_btn = ttk.Button(button_frame, text="Refresh List", command=refresh_list)
-    refresh_btn.pack(side=tk.LEFT, padx=(0, 8))
-    hint_label(button_frame, "Double click filenames to rename").pack(side=tk.LEFT, padx=5)
+    refresh_btn.pack(side=tk.LEFT, padx=(0, spacing["gap"]))
+    hint_label(button_frame, "Double click filenames to rename").pack(side=tk.LEFT, padx=spacing["sm"])
     hint_label(button_frame, "Updates are saved automatically").pack(side=tk.RIGHT)
 
     # Return a cleanup function that saves on tab close

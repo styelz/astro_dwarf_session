@@ -20,6 +20,7 @@ from ui.theme import (
     load_font_settings,
     palette,
     save_font_settings,
+    spacing,
 )
 from ui.widgets import card, section_header, hint_label, SearchableCombobox
 
@@ -296,8 +297,12 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
     canvas.configure(yscrollcommand=scrollbar.set)
 
     def _on_canvas_configure(event):
-        # Set the inner frame's width to the canvas width
-        canvas.itemconfig("frame", width=event.width)
+        # Stretch the inner page to the canvas so leftover space keeps the page colour.
+        canvas.itemconfig(
+            "frame",
+            width=event.width,
+            height=max(event.height, scrollable_frame.winfo_reqheight()),
+        )
 
     canvas.bind('<Configure>', _on_canvas_configure)
 
@@ -360,7 +365,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         ("imaging", "Imaging defaults"),
     ]
     panels = ttk.Frame(scrollable_frame)
-    panels.pack(fill="x", padx=10, pady=10)
+    panels.pack(fill="x", padx=spacing["pad"], pady=spacing["pad"])
     panels.grid_columnconfigure(0, weight=1, uniform="panel")
     panels.grid_columnconfigure(1, weight=1, uniform="panel")
     panel_layout = {
@@ -375,23 +380,25 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         "stellarium": "Leave blank for defaults.",
         "imaging": "Defaults used on the Create Session page.",
     }
+    gutter = spacing["gutter"]
+    half_gutter = gutter // 2
     for key, title in card_order:
-        outer, inner = card(panels, padding=10)
+        outer, inner = card(panels)
         row, column, span = panel_layout[key]
         outer.grid(
             row=row,
             column=column,
             columnspan=span,
             sticky="nsew",
-            padx=(0, 4) if column == 0 and span == 1 else (4, 0) if span == 1 else 0,
-            pady=(0, 8),
+            padx=(0, half_gutter) if column == 0 and span == 1 else (half_gutter, 0) if span == 1 else 0,
+            pady=(0, gutter),
         )
         header_row = ttk.Frame(inner, style="Card.TFrame")
-        header_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        header_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, spacing["section"]))
         section_header(header_row, title).pack(side="left")
         hint = header_hints.get(key)
         if hint:
-            hint_label(header_row, hint).pack(side="left", padx=(8, 0))
+            hint_label(header_row, hint).pack(side="left", padx=(spacing["gap"], 0))
         inner.grid_columnconfigure(1, weight=1)
         cards[key] = outer
         inners[key] = inner
@@ -410,22 +417,24 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
     theme_row = ttk.Frame(inners["appearance"], style="Card.TFrame")
     theme_row.grid(row=rows["appearance"], column=0, columnspan=2, sticky="w")
     rows["appearance"] += 1
-    ttk.Label(theme_row, text="Theme", style="Card.TLabel", width=12, anchor="e").pack(side="left", padx=(0, 8))
+    ttk.Label(theme_row, text="Theme", style="Card.TLabel", width=12, anchor="e").pack(
+        side="left", padx=(0, spacing["label_gap"])
+    )
     ttk.Radiobutton(
         theme_row, text="Dark", value="dark", variable=appearance_var, command=on_appearance_change
-    ).pack(side="left", padx=(0, 12))
+    ).pack(side="left", padx=(0, spacing["lg"]))
     ttk.Radiobutton(
         theme_row, text="Light", value="light", variable=appearance_var, command=on_appearance_change
-    ).pack(side="left", padx=(0, 12))
+    ).pack(side="left", padx=(0, spacing["lg"]))
     ttk.Radiobutton(
         theme_row, text="Redlight", value="redlight", variable=appearance_var, command=on_appearance_change
     ).pack(side="left")
     hint_label(inners["appearance"], "Applies immediately and is remembered for next launch.").grid(
-        row=rows["appearance"], column=0, columnspan=2, sticky="w", pady=(6, 0)
+        row=rows["appearance"], column=0, columnspan=2, sticky="w", pady=(spacing["gap"], 0)
     )
     rows["appearance"] += 1
     hint_label(inners["appearance"], "Redlight is a dim red screen to avoid lighting the capture.").grid(
-        row=rows["appearance"], column=0, columnspan=2, sticky="w", pady=(2, 0)
+        row=rows["appearance"], column=0, columnspan=2, sticky="w", pady=(spacing["xs"], 0)
     )
 
     font_settings = load_font_settings()
@@ -503,7 +512,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
     fonts_inner.grid_columnconfigure(2, weight=0)
 
     ttk.Label(fonts_inner, text="Font family", width=12, anchor="e", style="Card.TLabel").grid(
-        row=1, column=0, sticky="e", padx=(0, 8), pady=3
+        row=1, column=0, sticky="e", padx=(0, spacing["label_gap"]), pady=spacing["row"]
     )
     font_combo = SearchableCombobox(
         fonts_inner,
@@ -513,14 +522,14 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         empty_message="No matching fonts",
         height=12,
     )
-    font_combo.grid(row=1, column=1, sticky="ew", pady=3, padx=(0, 16))
+    font_combo.grid(row=1, column=1, sticky="ew", pady=spacing["row"], padx=(0, spacing["xl"]))
     font_combo._entry.bind("<FocusOut>", lambda _event: schedule_font_apply(), add="+")
     font_combo._entry.bind("<Return>", lambda _event: schedule_font_apply(), add="+")
 
     def _size_spinbox(parent, label, variable, role):
         lo, hi = FONT_SIZE_RANGES[role]
         wrap = ttk.Frame(parent, style="Card.TFrame")
-        ttk.Label(wrap, text=label, style="Card.TLabel").pack(side="left", padx=(0, 4))
+        ttk.Label(wrap, text=label, style="Card.TLabel").pack(side="left", padx=(0, spacing["sm"]))
         spin = ttk.Spinbox(
             wrap,
             from_=lo,
@@ -536,10 +545,10 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         return wrap
 
     sizes_row = ttk.Frame(fonts_inner, style="Card.TFrame")
-    sizes_row.grid(row=1, column=2, sticky="e", pady=3)
-    _size_spinbox(sizes_row, "Body", font_body_var, "body").pack(side="left", padx=(0, 10))
-    _size_spinbox(sizes_row, "Heading", font_heading_var, "heading").pack(side="left", padx=(0, 10))
-    _size_spinbox(sizes_row, "Small", font_hint_var, "hint").pack(side="left", padx=(0, 12))
+    sizes_row.grid(row=1, column=2, sticky="e", pady=spacing["row"])
+    _size_spinbox(sizes_row, "Body", font_body_var, "body").pack(side="left", padx=(0, spacing["lg"]))
+    _size_spinbox(sizes_row, "Heading", font_heading_var, "heading").pack(side="left", padx=(0, spacing["lg"]))
+    _size_spinbox(sizes_row, "Small", font_hint_var, "hint").pack(side="left", padx=(0, spacing["lg"]))
     ttk.Button(sizes_row, text="Reset fonts", command=reset_fonts, style="Compact.TButton").pack(side="left")
 
     hint_label(fonts_inner, "Type to search installed fonts. Changes apply immediately.").grid(
@@ -584,10 +593,10 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             if index != -1:
                 url = key[index:].strip()
                 link_label = ttk.Label(parent, text=key[:index], style="Link.TLabel", cursor="hand2", anchor="w")
-                link_label.grid(row=grid_row, column=1, sticky="w", pady=3)
+                link_label.grid(row=grid_row, column=1, sticky="w", pady=spacing["row"])
                 link_label.bind("<Button-1>", lambda e, url=url: open_link(url))
             else:
-                hint_label(parent, key).grid(row=grid_row, column=1, sticky="w", pady=3)
+                hint_label(parent, key).grid(row=grid_row, column=1, sticky="w", pady=spacing["row"])
             rows[group] += 1
             continue
 
@@ -595,7 +604,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
         parent = inners[group]
         grid_row = rows[group]
         ttk.Label(parent, width=12, text=field, anchor="e", style="Card.TLabel").grid(
-            row=grid_row, column=0, sticky="e", padx=(0, 8), pady=3
+            row=grid_row, column=0, sticky="e", padx=(0, spacing["label_gap"]), pady=spacing["row"]
         )
 
         if key == "address":
@@ -638,11 +647,11 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             )
             settings_vars[key] = var
             settings_vars["address_dropdown"] = combo
-            combo.grid(row=grid_row, column=1, sticky="ew", pady=3)
+            combo.grid(row=grid_row, column=1, sticky="ew", pady=spacing["row"])
             hint_label(parent, "Type to search, then pick a place from the list.").grid(
                 row=grid_row + 1, column=1, sticky="w"
             )
-            location_button.grid(row=grid_row + 2, column=1, pady=3, sticky="ew")
+            location_button.grid(row=grid_row + 2, column=1, pady=spacing["row"], sticky="ew")
             rows[group] += 2
         elif key == "timezone":
             current_tz = str(config.get(key, "") or "")
@@ -653,7 +662,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             combo = ttk.Combobox(parent, textvariable=var, values=tz_list, state="readonly")
             settings_vars[key] = var
             settings_vars["timezone_dropdown"] = combo
-            combo.grid(row=grid_row, column=1, sticky="ew", pady=3)
+            combo.grid(row=grid_row, column=1, sticky="ew", pady=spacing["row"])
         elif key == "ircut":
             device_type_val = config.get('device_type', '')
             if device_type_val in camera_type_display:
@@ -679,7 +688,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             ircut_combo = ttk.Combobox(parent, textvariable=ircut_var, values=display_options, state="readonly")
             settings_vars[key] = ircut_var
             settings_vars['ircut_dropdown'] = ircut_combo
-            ircut_combo.grid(row=grid_row, column=1, sticky="ew", pady=3)
+            ircut_combo.grid(row=grid_row, column=1, sticky="ew", pady=spacing["row"])
             settings_vars['_ircut_value_map'] = {disp: value_map[disp] for disp in display_options}
         elif key == "binning":
             binning_options = [("4k", 0), ("2k", 1)]
@@ -695,7 +704,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             combo = ttk.Combobox(parent, textvariable=var, values=binning_display_options, state="readonly")
             settings_vars[key] = var
             settings_vars['binning_dropdown'] = combo
-            combo.grid(row=grid_row, column=1, sticky="ew", pady=3)
+            combo.grid(row=grid_row, column=1, sticky="ew", pady=spacing["row"])
             if '_binning_value_map' not in settings_vars:
                 settings_vars['_binning_value_map'] = binning_value_map
         elif key == "camera_type":
@@ -708,7 +717,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             var = tk.StringVar(value=initial_display)
             combo = ttk.Combobox(parent, textvariable=var, values=camera_type_display, state="readonly")
             settings_vars[key] = var
-            combo.grid(row=grid_row, column=1, sticky="ew", pady=3)
+            combo.grid(row=grid_row, column=1, sticky="ew", pady=spacing["row"])
             if '_camera_type_value_map' not in settings_vars:
                 settings_vars['_camera_type_value_map'] = camera_type_value_map
 
@@ -780,19 +789,19 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             combo = ttk.Combobox(parent, textvariable=var, state="readonly")
             settings_vars[key] = var
             settings_vars['exposure_dropdown'] = combo
-            combo.grid(row=grid_row, column=1, sticky="ew", pady=3)
+            combo.grid(row=grid_row, column=1, sticky="ew", pady=spacing["row"])
         elif key == "gain":
             current_val = config.get(key, '22')
             var = tk.StringVar(value=current_val)
             combo = ttk.Combobox(parent, textvariable=var, state="readonly")
             settings_vars[key] = var
             settings_vars['gain_dropdown'] = combo
-            combo.grid(row=grid_row, column=1, sticky="ew", pady=3)
+            combo.grid(row=grid_row, column=1, sticky="ew", pady=spacing["row"])
         else:
             var = tk.StringVar(value=config.get(key, ''))
             entry = ttk.Entry(parent, textvariable=var)
             settings_vars[key] = var
-            entry.grid(row=grid_row, column=1, sticky="ew", pady=3)
+            entry.grid(row=grid_row, column=1, sticky="ew", pady=spacing["row"])
         rows[group] += 1
 
     if 'exposure_dropdown' in settings_vars and 'gain_dropdown' in settings_vars:
@@ -817,7 +826,7 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
             settings_vars['binning_dropdown'].config(state="disabled")
 
     saved_status = hint_label(inners["device"], "")
-    saved_status.grid(row=rows["device"], column=0, columnspan=2, sticky="se", pady=(8, 0))
+    saved_status.grid(row=rows["device"], column=0, columnspan=2, sticky="se", pady=(spacing["gap"], 0))
     inners["device"].grid_rowconfigure(rows["device"], weight=1)
     persist_job = {"id": None}
     status_job = {"id": None}
@@ -881,8 +890,12 @@ def create_settings_tab(tab_settings, settings_vars, camera_type_change_callback
 
     def on_app_close():
         persist_settings(show_status=False)
-        if hasattr(tab_settings, "winfo_toplevel"):
-            tab_settings.winfo_toplevel().destroy()
+        top = tab_settings.winfo_toplevel() if hasattr(tab_settings, "winfo_toplevel") else None
+        quit_fn = getattr(top, "quit_method", None) if top is not None else None
+        if callable(quit_fn):
+            quit_fn()
+        elif top is not None:
+            top.destroy()
 
     tab_settings.bind("<FocusOut>", on_tab_focus_out)
     root = tab_settings.winfo_toplevel()

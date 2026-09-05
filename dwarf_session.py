@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 
 from dwarf_python_api.lib.dwarf_utils import perform_GoLive
@@ -26,8 +27,13 @@ from dwarf_python_api.lib.dwarf_utils import perform_set_astro_stack_binning_v3
 from dwarf_python_api.lib.dwarf_utils import perform_takeAstroWidePhoto
 from dwarf_python_api.lib.dwarf_utils import perform_waitEndAstroWidePhoto, perform_waitRetryEndAstroWidePhoto
 from dwarf_python_api.lib.dwarf_utils import perform_start_autofocus
+from dwarf_python_api.lib.dwarf_utils import perform_stop_autofocus
 from dwarf_python_api.lib.dwarf_utils import start_polar_align
+from dwarf_python_api.lib.dwarf_utils import stop_polar_align
+from dwarf_python_api.lib.dwarf_utils import perform_stop_calibration
+from dwarf_python_api.lib.dwarf_utils import perform_stop_motors
 from dwarf_python_api.lib.dwarf_utils import perform_time
+from device_stop import stops_for, is_user_stop_result
 
 # V3: the live HTTP API is the only confirmed-reliable way to read back the
 # CURRENT exposure/gain/filter values in V3 - CMD_CAMERA_TELE_GET_ALL_PARAMS
@@ -115,39 +121,122 @@ class SessionCancelled(Exception):
     pass
 
 
+_stop_lock = threading.Lock()
+
+
 def _stop_captures_best_effort():
     """Stop tele/wide capture if one is actually running, without racing an in-flight wait."""
+    stop_telescope_activity(stop_imaging=True)
+
+
+def _client_status_dict():
     try:
         from dwarf_python_api.lib.websockets_utils import get_client_status
-        try:
-            from dwarf_python_api.lib.websockets_utils import clear_command_interrupt
-            clear_command_interrupt()
-        except ImportError:
-            pass
-        try:
-            from dwarf_python_api.lib.websockets_utils import flush_pending_results
-            flush_pending_results()
-        except ImportError:
-            pass
         status = get_client_status()
-        if isinstance(status, str):
-            try:
-                status = json.loads(status)
-            except Exception:
-                status = {}
-        full = status.get("fullStatus", {}) if isinstance(status, dict) else {}
-        tele = bool(full.get("takePhotoStarted") or full.get("AstroCapture"))
-        wide = bool(full.get("takeWidePhotoStarted") or full.get("AstroWideCapture"))
-        if tele or not full:
-            perform_stopAstroPhoto()
-        if wide:
-            perform_stopAstroWidePhoto()
-    except Exception as e:
-        log.debug(f"Best-effort stop capture after cancel failed: {e}")
+    except Exception:
+        return {}
+    if isinstance(status, str):
         try:
-            perform_stopAstroPhoto()
+            status = json.loads(status)
         except Exception:
-            pass
+            return {}
+    if not isinstance(status, dict):
+        return {}
+    if "error" in status and "fullStatus" not in status:
+        return {}
+    return status.get("fullStatus", status)
+
+
+def _wait_for_websocket_idle(timeout=2):
+    """Let an interrupted command finish so a device-stop can be sent."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        full = _client_status_dict()
+        if not full or full.get("currentCommand") in (None, 0):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _result_ok(result):
+    return result is True or result == 0
+
+
+def _send_device_stop(function, label):
+    try:
+        result = function()
+    except Exception as e:
+        log.notice(f"{label} could not complete: {e}")
+        return False
+    if _result_ok(result):
+        log.notice(f"Telescope acknowledged {label}.")
+        return True
+    if is_user_stop_result(result) or result is False:
+        log.notice(f"{label} requested.")
+        return True
+    log.notice(f"{label} result: {result}.")
+    return False
+
+
+def _wait_for_named_state(status_key, timeout=20, idle_names=("ASTRO_STATE_IDLE", "ASTRO_STATE_STOPPED", "IDLE", "STOPPED")):
+    deadline = time.time() + timeout
+    last = object()
+    while time.time() < deadline:
+        full = _client_status_dict()
+        state = full.get(status_key)
+        if state != last:
+            last = state
+            if state:
+                log.notice(f"Telescope {status_key}: {state}")
+        if state in idle_names:
+            return True
+        time.sleep(0.4)
+    return False
+
+
+def _stop_senders():
+    return {
+        "stop_astro_photo": perform_stopAstroPhoto,
+        "stop_wide_astro_photo": perform_stopAstroWidePhoto,
+        "stop_calibration": perform_stop_calibration,
+        "stop_autofocus": perform_stop_autofocus,
+        "stop_eq": stop_polar_align,
+        "stop_goto": perform_stop_goto,
+        "stop_motors": perform_stop_motors,
+    }
+
+
+def stop_telescope_activity(action_name=None, stop_imaging=False):
+    """Abort the in-flight websocket wait, then send the matching device stop.
+
+    Interrupting a command only unblocks this app; the telescope keeps going
+    until the specific stop command is sent (calibration, autofocus, EQ, goto).
+    """
+    with _stop_lock:
+        _stop_telescope_activity_locked(action_name=action_name, stop_imaging=stop_imaging)
+
+
+def _stop_telescope_activity_locked(action_name=None, stop_imaging=False):
+    try:
+        from dwarf_python_api.lib.websockets_utils import request_command_interrupt
+        request_command_interrupt()
+    except Exception:
+        pass
+    _wait_for_websocket_idle()
+    try:
+        from dwarf_python_api.lib.websockets_utils import clear_command_interrupt
+        clear_command_interrupt()
+    except Exception:
+        pass
+    try:
+        from dwarf_python_api.lib.websockets_utils import flush_pending_results
+        flush_pending_results()
+    except Exception:
+        pass
+
+    senders = _stop_senders()
+    for key in stops_for(action_name, stop_imaging=stop_imaging):
+        _send_device_stop(senders[key], key.replace("_", " "))
 
 
 def try_attemps (function, function_succeed_message, max_attempts = 3, interrupted=lambda: False):

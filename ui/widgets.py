@@ -20,11 +20,496 @@ import ui.theme as ui_theme
 
 
 VIDEO_ASPECT = 16 / 9
+_OVERLAY_ICON_SIZE = 22
+_OVERLAY_BUTTON_GAP = 5
+OVERLAY_TOOLTIPS = {
+    "fullscreen": "Full screen",
+    "maximize": "Fill app window",
+    "restore": "Restore",
+    "lens": "Switch live preview lens",
+}
 
 
 def hex_to_rgb(value):
     value = value.lstrip("#")
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def largest_rect_for_aspect(avail_w, avail_h, aspect=VIDEO_ASPECT):
+    """Largest width, height with the given aspect that fits in the box."""
+    avail_w = max(int(avail_w), 1)
+    avail_h = max(int(avail_h), 1)
+    if avail_w / avail_h > aspect:
+        height = avail_h
+        width = max(1, int(round(height * aspect)))
+        if width > avail_w:
+            width = avail_w
+            height = max(1, int(round(width / aspect)))
+    else:
+        width = avail_w
+        height = max(1, int(round(width / aspect)))
+        if height > avail_h:
+            height = avail_h
+            width = max(1, int(round(height * aspect)))
+    return width, height
+
+
+def work_area_rect(window):
+    """Monitor work area (x, y, width, height) that contains `window`."""
+    try:
+        window.update_idletasks()
+    except tk.TclError:
+        pass
+    if sys.platform == "win32":
+        try:
+            hwnd = win32_hwnd(window)
+            monitor = ctypes.windll.user32.MonitorFromWindow(hwnd, 2)
+            info = _MonitorInfo()
+            info.cbSize = ctypes.sizeof(_MonitorInfo)
+            if ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                area = info.rcWork
+                return area.left, area.top, area.right - area.left, area.bottom - area.top
+        except Exception:
+            pass
+    try:
+        return 0, 0, window.winfo_screenwidth(), window.winfo_screenheight()
+    except tk.TclError:
+        return 0, 0, 1, 1
+
+
+def fit_image_in_box(image, box_w, box_h, fill, resample=None):
+    """Scale an image into a box without stretching, letterboxing with `fill`."""
+    from PIL import Image
+
+    box_w = max(int(box_w), 1)
+    box_h = max(int(box_h), 1)
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    src_ratio = image.width / max(image.height, 1)
+    box_ratio = box_w / box_h
+    if src_ratio > box_ratio:
+        new_w = box_w
+        new_h = max(1, int(box_w / src_ratio))
+    else:
+        new_h = box_h
+        new_w = max(1, int(box_h * src_ratio))
+    if resample is None:
+        resample = getattr(Image, "Resampling", Image).LANCZOS
+    if new_w == image.width and new_h == image.height:
+        fitted = image
+    else:
+        fitted = image.resize((new_w, new_h), resample)
+    if new_w == box_w and new_h == box_h:
+        return fitted
+    canvas = Image.new("RGB", (box_w, box_h), fill)
+    canvas.paste(fitted, ((box_w - new_w) // 2, (box_h - new_h) // 2))
+    return canvas
+
+
+def stretch_image_to_box(image, box_w, box_h):
+    """Scale an image to fill a box, stretching if the aspect ratio differs."""
+    from PIL import Image
+
+    box_w = max(int(box_w), 1)
+    box_h = max(int(box_h), 1)
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    resample = getattr(Image, "Resampling", Image).LANCZOS
+    return image.resize((box_w, box_h), resample)
+
+
+class OverlayIconButton(tk.Canvas):
+    """Small hoverable icon used on the live-preview overlay."""
+
+    def __init__(self, parent, kind, command):
+        super().__init__(
+            parent,
+            width=_OVERLAY_ICON_SIZE,
+            height=_OVERLAY_ICON_SIZE,
+            highlightthickness=1,
+            highlightbackground=palette["border"],
+            highlightcolor=palette["border"],
+            bd=0,
+            cursor="hand2",
+            bg=palette["card"],
+        )
+        self.kind = kind
+        self._command = command
+        self._hover = False
+        self._active = False
+        self._enabled = True
+        self._theme_role = "video_overlay"
+        self._redraw_theme = self.redraw
+        self.bind("<Enter>", self._on_enter, add="+")
+        self.bind("<Leave>", self._on_leave, add="+")
+        self.bind("<Button-1>", self._on_click, add="+")
+        self.redraw()
+
+    def set_kind(self, kind):
+        self.kind = kind
+        self.redraw()
+
+    def set_enabled(self, enabled):
+        self._enabled = bool(enabled)
+        try:
+            self.configure(cursor="hand2" if self._enabled else "arrow")
+        except tk.TclError:
+            pass
+        self.redraw()
+
+    def set_active(self, active):
+        self._active = bool(active)
+        self.redraw()
+
+    def _on_enter(self, _event=None):
+        self._hover = True
+        self.redraw()
+
+    def _on_leave(self, _event=None):
+        self._hover = False
+        self.redraw()
+
+    def _on_click(self, _event=None):
+        if not getattr(self, "_enabled", True):
+            return "break"
+        if self._command:
+            self._command()
+        return "break"
+
+    def _colors(self):
+        if not getattr(self, "_enabled", True):
+            return palette["card"], palette["muted"], palette["border"]
+        if self._active:
+            return palette["accent"], palette["accent_fg"], palette["accent"]
+        if self._hover:
+            return palette["button_active"], palette["fg"], palette["border_strong"]
+        return palette["card"], palette["fg"], palette["border"]
+
+    def redraw(self):
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        bg, fg, border = self._colors()
+        self.configure(
+            bg=bg,
+            highlightthickness=1,
+            highlightbackground=border,
+            highlightcolor=border,
+        )
+        self.delete("all")
+        if self.kind == "fullscreen":
+            self._draw_fullscreen(fg)
+        elif self.kind == "restore":
+            self._draw_restore(fg)
+        elif self.kind == "wide":
+            self._draw_wide(fg)
+        elif self.kind == "tele":
+            self._draw_tele(fg)
+        else:
+            self._draw_maximize(fg)
+
+    def _draw_maximize(self, fg):
+        """Window with a title bar: maximize inside the app window."""
+        size = _OVERLAY_ICON_SIZE
+        pad = 4
+        title = pad + 4
+        self.create_rectangle(pad, pad, size - pad, size - pad, outline=fg, width=1)
+        self.create_rectangle(pad + 1, pad + 1, size - pad, title, outline=fg, fill=fg)
+
+    def _draw_fullscreen(self, fg):
+        """Arrows pointing to all four corners: fill the whole screen."""
+        size = _OVERLAY_ICON_SIZE
+        pad = 3
+        inner = pad + 7
+        self._draw_corner_arrow(inner, inner, pad, pad, fg)
+        self._draw_corner_arrow(size - inner, inner, size - pad, pad, fg)
+        self._draw_corner_arrow(inner, size - inner, pad, size - pad, fg)
+        self._draw_corner_arrow(size - inner, size - inner, size - pad, size - pad, fg)
+
+    def _draw_restore(self, fg):
+        """Arrows pointing inward: return to the small live preview."""
+        size = _OVERLAY_ICON_SIZE
+        pad = 3
+        inner = pad + 7
+        self._draw_corner_arrow(pad, pad, inner, inner, fg)
+        self._draw_corner_arrow(size - pad, pad, size - inner, inner, fg)
+        self._draw_corner_arrow(pad, size - pad, inner, size - inner, fg)
+        self._draw_corner_arrow(size - pad, size - pad, size - inner, size - inner, fg)
+
+    def _draw_corner_arrow(self, x, y, tip_x, tip_y, fg):
+        head = 4
+        self.create_line(x, y, tip_x, tip_y, fill=fg, width=1, capstyle=tk.ROUND)
+        if tip_x <= x:
+            hx = tip_x + head
+        else:
+            hx = tip_x - head
+        if tip_y <= y:
+            hy = tip_y + head
+        else:
+            hy = tip_y - head
+        self.create_line(tip_x, tip_y, hx, tip_y, fill=fg, width=1, capstyle=tk.ROUND)
+        self.create_line(tip_x, tip_y, tip_x, hy, fill=fg, width=1, capstyle=tk.ROUND)
+
+    def _draw_tele(self, fg):
+        """Camera with a long barrel: telephoto."""
+        self.create_rectangle(3, 7, 11, 16, outline=fg, width=1)
+        self.create_rectangle(11, 9, 19, 14, outline=fg, width=1)
+        self.create_oval(16, 10, 19, 13, outline=fg, width=1)
+
+    def _draw_wide(self, fg):
+        """Camera with a flared lens: wide angle."""
+        self.create_rectangle(3, 7, 10, 16, outline=fg, width=1)
+        self.create_line(10, 8, 19, 5, fill=fg, width=1, capstyle=tk.ROUND)
+        self.create_line(10, 15, 19, 18, fill=fg, width=1, capstyle=tk.ROUND)
+        self.create_line(19, 5, 19, 18, fill=fg, width=1, capstyle=tk.ROUND)
+
+
+class VideoHoverOverlay:
+    """Corner controls that appear while the pointer is over a video host."""
+
+    _TOP_KINDS = ("restore", "maximize", "fullscreen")
+    _BOTTOM_KINDS = ("lens",)
+    _KIND_ORDER = _TOP_KINDS + _BOTTOM_KINDS
+    IDLE_HIDE_MS = 3000
+
+    def __init__(self, host, commands, visible_kinds=None, idle_hide_ms=None, can_show=None):
+        self.host = host
+        self.commands = dict(commands)
+        self.current = None
+        self.enabled = True
+        self.can_show = can_show
+        self.idle_hide_ms = self.IDLE_HIDE_MS if idle_hide_ms is None else idle_hide_ms
+        self._hide_job = None
+        self._idle_job = None
+        self.bar = self._make_bar(host)
+        self.bottom_bar = self._make_bar(host)
+        self.buttons = {}
+        for kind in self._KIND_ORDER:
+            if kind not in self.commands:
+                continue
+            parent = self.bottom_bar if kind in self._BOTTOM_KINDS else self.bar
+            draw_kind = "tele" if kind == "lens" else kind
+            button = OverlayIconButton(parent, draw_kind, lambda chosen=kind: self._run(chosen))
+            self.buttons[kind] = button
+            self._bind_hover(button)
+        self._bind_hover(host)
+        for child in host.winfo_children():
+            if child not in (self.bar, self.bottom_bar):
+                self._bind_hover(child)
+        self._bind_hover(self.bar)
+        self._bind_hover(self.bottom_bar)
+        kinds = visible_kinds
+        if kinds is None:
+            kinds = tuple(kind for kind in self._KIND_ORDER if kind in self.commands)
+        self.set_visible_kinds(kinds)
+        self.hide()
+
+    def _make_bar(self, host):
+        bar = tk.Frame(
+            host,
+            bg=palette["video_bg"],
+            highlightthickness=0,
+            bd=0,
+        )
+        bar._theme_role = "video"
+        return bar
+
+    def _run(self, kind):
+        if kind != "restore" and not self.tools_active():
+            return
+        command = self.commands.get(kind)
+        if command:
+            command()
+
+    def tools_active(self):
+        if not self.enabled:
+            return False
+        if self.can_show is None:
+            return True
+        try:
+            return bool(self.can_show())
+        except Exception:
+            return False
+
+    def set_visible_kinds(self, kinds):
+        wanted = [kind for kind in kinds if kind in self.buttons]
+        for kind, button in self.buttons.items():
+            button.pack_forget()
+        top = [kind for kind in wanted if kind in self._TOP_KINDS]
+        bottom = [kind for kind in wanted if kind in self._BOTTOM_KINDS]
+        for index, kind in enumerate(top):
+            pad = (0, 0) if index == 0 else (_OVERLAY_BUTTON_GAP, 0)
+            self.buttons[kind].pack(side="left", padx=pad, pady=0)
+        for index, kind in enumerate(bottom):
+            pad = (0, 0) if index == 0 else (_OVERLAY_BUTTON_GAP, 0)
+            self.buttons[kind].pack(side="left", padx=pad, pady=0)
+        self.refresh()
+
+    def set_current(self, kind):
+        self.current = kind
+        self.refresh()
+
+    def refresh(self):
+        for bar in (self.bar, self.bottom_bar):
+            try:
+                bar.configure(bg=palette["video_bg"], highlightthickness=0)
+            except tk.TclError:
+                return
+        for kind, button in self.buttons.items():
+            if kind == "lens":
+                continue
+            button.set_active(kind == self.current)
+
+    def _bar_has_packed_buttons(self, bar):
+        try:
+            for child in bar.winfo_children():
+                if child.winfo_manager() == "pack":
+                    return True
+        except tk.TclError:
+            return False
+        return False
+
+    def show(self):
+        if not self.tools_active():
+            self.hide()
+            return
+        try:
+            if not self.host.winfo_exists():
+                return
+            if self._bar_has_packed_buttons(self.bar):
+                self.bar.place(relx=1.0, rely=0.0, x=-6, y=6, anchor="ne")
+                self.bar.lift()
+            if self._bar_has_packed_buttons(self.bottom_bar):
+                self.bottom_bar.place(relx=1.0, rely=1.0, x=-6, y=-6, anchor="se")
+                self.bottom_bar.lift()
+        except tk.TclError:
+            pass
+
+    def hide(self):
+        for bar in (self.bar, getattr(self, "bottom_bar", None)):
+            if bar is None:
+                continue
+            try:
+                bar.place_forget()
+            except tk.TclError:
+                pass
+
+    def attach_tooltips(self, tooltip_cls, texts=None):
+        labels = dict(OVERLAY_TOOLTIPS)
+        if texts:
+            labels.update(texts)
+        handles = []
+        for kind, button in self.buttons.items():
+            text = labels.get(kind)
+            if text:
+                handles.append(tooltip_cls(button, text))
+        self._tooltip_handles = handles
+        return handles
+
+    def destroy(self):
+        self._cancel_hide()
+        self._cancel_idle()
+        self._hide_tooltips()
+        self._tooltip_handles = []
+        try:
+            self.bar.destroy()
+        except tk.TclError:
+            pass
+        try:
+            self.bottom_bar.destroy()
+        except tk.TclError:
+            pass
+
+    def _hide_tooltips(self):
+        for tip in getattr(self, "_tooltip_handles", []):
+            hide = getattr(tip, "hide_tooltip", None)
+            if callable(hide):
+                try:
+                    hide()
+                except tk.TclError:
+                    pass
+
+    def _bind_hover(self, widget):
+        widget.bind("<Enter>", self._on_enter, add="+")
+        widget.bind("<Leave>", self._on_leave, add="+")
+        widget.bind("<Motion>", self._on_motion, add="+")
+
+    def _on_enter(self, _event=None):
+        if not self.tools_active():
+            return
+        self._cancel_hide()
+        self.show()
+        self._arm_idle_hide()
+
+    def _on_motion(self, _event=None):
+        if not self.tools_active():
+            self.hide()
+            return
+        self._cancel_hide()
+        self.show()
+        self._arm_idle_hide()
+
+    def _on_leave(self, _event=None):
+        self._cancel_idle()
+        self._cancel_hide()
+        try:
+            self._hide_job = self.host.after(80, self._hide_if_outside)
+        except tk.TclError:
+            self.hide()
+
+    def _hide_if_outside(self):
+        self._hide_job = None
+        if not self._pointer_over_area():
+            self._cancel_idle()
+            self.hide()
+            self._hide_tooltips()
+
+    def _arm_idle_hide(self):
+        self._cancel_idle()
+        delay = max(int(self.idle_hide_ms), 1)
+        try:
+            self._idle_job = self.host.after(delay, self._on_idle_timeout)
+        except tk.TclError:
+            pass
+
+    def _on_idle_timeout(self):
+        self._idle_job = None
+        self.hide()
+        self._hide_tooltips()
+
+    def _cancel_idle(self):
+        job = self._idle_job
+        self._idle_job = None
+        if job is None:
+            return
+        try:
+            self.host.after_cancel(job)
+        except (tk.TclError, ValueError):
+            pass
+
+    def _cancel_hide(self):
+        job = self._hide_job
+        self._hide_job = None
+        if job is None:
+            return
+        try:
+            self.host.after_cancel(job)
+        except (tk.TclError, ValueError):
+            pass
+
+    def _pointer_over_area(self):
+        try:
+            x, y = self.host.winfo_pointerxy()
+            widget = self.host.winfo_containing(x, y)
+        except (tk.TclError, KeyError):
+            return False
+        while widget is not None:
+            if widget is self.host or widget is self.bar or widget is getattr(self, "bottom_bar", None):
+                return True
+            widget = getattr(widget, "master", None)
+        return False
 
 
 def card(parent, padding=None):
@@ -197,9 +682,11 @@ def status_label(parent, folder, count=0):
     return label
 
 
-def form_row(parent, row, label_text, widget, label_width=22, pady=4):
+def form_row(parent, row, label_text, widget, label_width=22, pady=None):
+    if pady is None:
+        pady = spacing["row"]
     label = ttk.Label(parent, text=label_text, width=label_width, style="Card.TLabel", anchor="e")
-    label.grid(row=row, column=0, sticky="e", padx=(0, 8), pady=pady)
+    label.grid(row=row, column=0, sticky="e", padx=(0, spacing["label_gap"]), pady=pady)
     widget.grid(row=row, column=1, sticky="ew", pady=pady)
     parent.grid_columnconfigure(1, weight=1)
     return label, widget
@@ -246,7 +733,7 @@ class SearchableCombobox(ttk.Frame):
         self._arrow = ttk.Button(
             self, text="▾", width=2, command=self.toggle_popup, takefocus=False, style="Compact.TButton"
         )
-        self._arrow.grid(row=0, column=1, sticky="ns", padx=(2, 0))
+        self._arrow.grid(row=0, column=1, sticky="ns", padx=(spacing["sm"], 0))
 
         self._entry.bind("<KeyRelease>", self._on_keyrelease)
         self._entry.bind("<Down>", self._on_arrow_down)
@@ -563,10 +1050,15 @@ class SearchableCombobox(ttk.Frame):
             return False
 
 
-def panel_host(parent, padx=12, pady=12):
+def panel_host(parent, padx=None, pady=None):
     """Host frame for responsive card layouts."""
     host = ttk.Frame(parent)
-    host.pack(fill="both", expand=True, padx=padx, pady=pady)
+    host.pack(
+        fill="both",
+        expand=True,
+        padx=spacing["pad"] if padx is None else padx,
+        pady=spacing["pad"] if pady is None else pady,
+    )
     return host
 
 
@@ -583,6 +1075,8 @@ def configure_panel_layout(host, rows, min_two_col_width=980):
     caller explicitly groups into pairs are shown in two columns.
     """
     ordered_cards = [panel for row in rows for panel in row]
+    gutter = spacing["gutter"]
+    half = gutter // 2
 
     def place_cards(use_two_columns):
         for row_index in range(max(len(rows), len(ordered_cards))):
@@ -597,14 +1091,14 @@ def configure_panel_layout(host, rows, min_two_col_width=980):
             host.grid_columnconfigure(1, weight=1, uniform="panel")
             for row_index, row in enumerate(rows):
                 if len(row) == 2:
-                    row[0].grid(row=row_index, column=0, sticky="nsew", padx=(0, 4), pady=(0, 8))
-                    row[1].grid(row=row_index, column=1, sticky="nsew", padx=(4, 0), pady=(0, 8))
+                    row[0].grid(row=row_index, column=0, sticky="nsew", padx=(0, half), pady=(0, gutter))
+                    row[1].grid(row=row_index, column=1, sticky="nsew", padx=(half, 0), pady=(0, gutter))
                 elif len(row) == 1:
-                    row[0].grid(row=row_index, column=0, columnspan=2, sticky="nsew", pady=(0, 8))
+                    row[0].grid(row=row_index, column=0, columnspan=2, sticky="nsew", pady=(0, gutter))
         else:
             host.grid_columnconfigure(0, weight=1)
             for row_index, panel in enumerate(ordered_cards):
-                panel.grid(row=row_index, column=0, sticky="nsew", pady=(0, 8))
+                panel.grid(row=row_index, column=0, sticky="nsew", pady=(0, gutter))
 
     def refresh_layout(_event=None):
         try:
@@ -626,7 +1120,7 @@ def title_bar(parent, title, on_minimize, on_maximize, on_close):
     )
     title_label._theme_role = "titlebar"
     title_label._theme_font = "heading"
-    title_label.pack(side="left", padx=14, pady=8)
+    title_label.pack(side="left", padx=spacing["lg"], pady=spacing["md"])
 
     close_btn = _chrome_button(bar, "✕", on_close, danger=True)
     close_btn.pack(side="right")
@@ -687,7 +1181,7 @@ def _chrome_button(parent, text, command, danger=False):
 
     def on_enter(_event):
         if danger:
-            button.configure(bg=palette["danger"], fg=palette["danger_fg"])
+            button.configure(bg=palette["danger"], fg=palette["on_danger"])
         else:
             button.configure(bg=palette["button_active"], fg=palette["fg"])
 
@@ -706,6 +1200,15 @@ class _WinRect(ctypes.Structure):
         ("top", ctypes.c_long),
         ("right", ctypes.c_long),
         ("bottom", ctypes.c_long),
+    ]
+
+
+class _MonitorInfo(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("rcMonitor", _WinRect),
+        ("rcWork", _WinRect),
+        ("dwFlags", ctypes.c_ulong),
     ]
 
 
@@ -748,6 +1251,53 @@ def hide_native_titlebar(window):
         apply_native_frame_colors(window)
 
 
+def _text_width(widget, font_spec, text):
+    """Pixel width of text in a font description, without creating a font object."""
+    try:
+        return int(widget.tk.call("font", "measure", font_spec, text))
+    except (tk.TclError, ValueError):
+        return 0
+
+
+TAB_UNDERLINE_HEIGHT = 2
+
+
+def _reserve_tab_size(button):
+    """Freeze a tab cell at the size its label needs when bold.
+
+    Hover bolds the label, and bold glyphs are wider. Sizing the cell to the
+    bold metrics up front and switching off geometry propagation means the strip
+    never reflows: the label just renders heavier inside a box that already had
+    room for it. Re-measured on every repaint so a font change in Settings is
+    picked up.
+    """
+    cell = getattr(button, "_tab_cell", None)
+    if cell is None:
+        return
+    try:
+        width = _text_width(button, fonts["subheading"], button.cget("text")) + 2 * spacing["xl"]
+        height = button.winfo_reqheight() + TAB_UNDERLINE_HEIGHT
+        cell.pack_propagate(False)
+        cell.configure(width=width, height=height)
+    except tk.TclError:
+        pass
+
+
+def _paint_tab(button):
+    """Repaint one tab from its selected/hover flags; hover bolds inactive tabs."""
+    selected = getattr(button, "_tab_selected", False)
+    bold = getattr(button, "_tab_hover", False) and not selected
+    try:
+        button.configure(
+            bg=palette["bg"],
+            fg=palette["fg"] if selected else palette["muted"],
+            font=fonts["subheading"] if bold else fonts["body"],
+        )
+    except tk.TclError:
+        pass
+    _reserve_tab_size(button)
+
+
 def tab_bar(parent, items, on_select, initial=None):
     """Custom equal-height tab strip. items is [(id, label), ...]."""
     bar = tk.Frame(parent, bg=palette["bg"], highlightthickness=0, bd=0, relief="flat")
@@ -759,12 +1309,18 @@ def tab_bar(parent, items, on_select, initial=None):
         for tid, button in buttons.items():
             active = tid == tab_id
             button._tab_selected = active
-            button.configure(fg=palette["fg"] if active else palette["muted"], bg=palette["bg"])
+            if active:
+                button._tab_hover = False
+            _paint_tab(button)
             line = underlines[tid]
             line._tab_selected = active
             line.configure(bg=palette["accent"] if active else palette["bg"])
         if notify:
             on_select(tab_id)
+
+    def set_hover(button, hovering):
+        button._tab_hover = hovering
+        _paint_tab(button)
 
     for tab_id, label in items:
         cell = tk.Frame(bar, bg=palette["bg"], highlightthickness=0, bd=0, relief="flat")
@@ -776,21 +1332,33 @@ def tab_bar(parent, items, on_select, initial=None):
             bg=palette["bg"],
             fg=palette["muted"],
             font=fonts["body"],
-            padx=16,
-            pady=10,
+            padx=spacing["xl"],
+            pady=spacing["lg"],
             cursor="hand2",
             bd=0,
             relief="flat",
         )
         button._theme_role = "tab"
-        button._theme_font = "body"
         button._tab_selected = False
-        button.pack()
-        line = tk.Frame(cell, height=2, bg=palette["bg"], highlightthickness=0, bd=0, relief="flat")
+        button._tab_hover = False
+        button._tab_cell = cell
+        button._tab_repaint = lambda btn=button: _paint_tab(btn)
+        line = tk.Frame(
+            cell,
+            height=TAB_UNDERLINE_HEIGHT,
+            bg=palette["bg"],
+            highlightthickness=0,
+            bd=0,
+            relief="flat",
+        )
         line._theme_role = "tab_underline"
         line._tab_selected = False
-        line.pack(fill="x")
+        line.pack(side="bottom", fill="x")
+        button.pack(side="top", fill="both", expand=True)
+        _reserve_tab_size(button)
         button.bind("<Button-1>", lambda _event, tid=tab_id: select(tid))
+        button.bind("<Enter>", lambda _event, btn=button: set_hover(btn, True))
+        button.bind("<Leave>", lambda _event, btn=button: set_hover(btn, False))
         buttons[tab_id] = button
         underlines[tab_id] = line
 
@@ -897,7 +1465,7 @@ def install_mousewheel(root):
     def _on_mousewheel(event):
         try:
             widget = root.winfo_containing(event.x_root, event.y_root)
-        except tk.TclError:
+        except (tk.TclError, KeyError):
             return
         target = _scrollable(widget)
         if target is None:

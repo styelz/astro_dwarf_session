@@ -19,7 +19,7 @@ The modern GUI provides six comprehensive tabs:
 
 #### 📋 **Main Tab**
 - **Multi-Configuration Support**: Manage multiple telescope setups
-- **Real-Time Video Preview**: Live MJPEG stream from telescope
+- **Real-Time Video Preview**: Live MJPEG stream from telescope, with hover full-screen and maximize views
 - **Session Monitoring**: Live session info with runtime tracking and countdowns
 - **Connection Management**: Bluetooth/Wi-Fi connection controls
 - **Scheduler Controls**: Start/stop scheduler, calibration, polar alignment

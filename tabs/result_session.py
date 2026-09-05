@@ -5,7 +5,17 @@ import json
 import os
 import csv
 from datetime import datetime, timedelta
-from ui.theme import apply_theme, fonts, load_appearance, palette, style_treeview_rows, sync_treeview_selection, theme_window_frame
+from ui.theme import (
+    apply_theme,
+    fonts,
+    load_appearance,
+    palette,
+    spacing,
+    style_text,
+    style_treeview_rows,
+    sync_treeview_selection,
+    theme_window_frame,
+)
 from ui.widgets import card, section_header
 
 # Directories
@@ -43,18 +53,23 @@ def result_session_tab(parent_frame):
     parent_frame.grid_columnconfigure(0, weight=1)
 
     toolbar_card, top_frame = card(parent_frame)
-    toolbar_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+    toolbar_card.grid(
+        row=0, column=0, sticky="ew",
+        padx=spacing["pad"], pady=(spacing["pad"], spacing["gutter"]),
+    )
     top_frame.grid_columnconfigure(1, weight=1)
 
-    ttk.Label(top_frame, text="Observation file", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+    ttk.Label(top_frame, text="Observation file", style="Card.TLabel").grid(
+        row=0, column=0, sticky="w", padx=(0, spacing["label_gap"])
+    )
     combobox = ttk.Combobox(top_frame, state="readonly")
     combobox.grid(row=0, column=1, sticky="ew")
 
     ok_card, ok_frame = card(parent_frame)
-    ok_card.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
+    ok_card.grid(row=1, column=0, sticky="nsew", padx=spacing["pad"], pady=(0, spacing["gutter"]))
     ok_frame.grid_rowconfigure(1, weight=1)
     ok_frame.grid_columnconfigure(0, weight=1)
-    section_header(ok_frame, "Sessions OK").grid(row=0, column=0, sticky="w", pady=(0, 8))
+    section_header(ok_frame, "Sessions OK").grid(row=0, column=0, sticky="w", pady=(0, spacing["section"]))
 
     ok_treeview = ttk.Treeview(ok_frame, columns=columns_OK, show='headings', height=10, cursor="hand2")
     default_width = 100
@@ -69,10 +84,10 @@ def result_session_tab(parent_frame):
     bind_result_treeview(ok_treeview)
 
     error_card, error_frame = card(parent_frame)
-    error_card.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
+    error_card.grid(row=2, column=0, sticky="nsew", padx=spacing["pad"], pady=(0, spacing["pad"]))
     error_frame.grid_rowconfigure(1, weight=1)
     error_frame.grid_columnconfigure(0, weight=1)
-    section_header(error_frame, "Error Sessions").grid(row=0, column=0, sticky="w", pady=(0, 8))
+    section_header(error_frame, "Error Sessions").grid(row=0, column=0, sticky="w", pady=(0, spacing["section"]))
 
     error_treeview = ttk.Treeview(error_frame, columns=columns_KO, show='headings', height=10, cursor="hand2")
     for col in columns_KO:
@@ -113,7 +128,7 @@ def result_session_tab(parent_frame):
         refresh()
 
     update_button = ttk.Button(top_frame, text="Update Results", command=lambda: refresh())
-    update_button.grid(row=0, column=2, padx=(10, 5))
+    update_button.grid(row=0, column=2, padx=(spacing["gap"], spacing["sm"]))
     delete_button = ttk.Button(top_frame, text="Delete File", command=delete_selected_file, style="Danger.TButton")
     delete_button.grid(row=0, column=3)
 
@@ -208,9 +223,80 @@ def _display_value(row, *keys):
     return "—"
 
 
+_result_treeviews = []
+_click_away_bound = False
+
+
 def bind_result_treeview(treeview):
     treeview.bind("<ButtonRelease-1>", lambda event: on_result_row_click(event, treeview), add="+")
     treeview.bind("<<TreeviewSelect>>", lambda _event: sync_treeview_selection(treeview), add="+")
+    _register_result_treeview(treeview)
+
+
+def _register_result_treeview(treeview):
+    """Track the result trees so a click elsewhere can drop their selection.
+
+    Scoped to this tab on purpose: the Session Overview and Edit Sessions trees
+    drive a detail panel and a delete button off their selection, so clearing
+    those on any stray click would lose the user's place.
+    """
+    global _click_away_bound
+    _result_treeviews[:] = [tree for tree in _result_treeviews if _alive(tree)]
+    if treeview not in _result_treeviews:
+        _result_treeviews.append(treeview)
+    if not _click_away_bound:
+        treeview.bind_all("<Button-1>", _on_click_away, add="+")
+        _click_away_bound = True
+
+
+def _alive(widget):
+    try:
+        return bool(widget.winfo_exists())
+    except tk.TclError:
+        return False
+
+
+def _clear_result_selection(keep=None):
+    for tree in list(_result_treeviews):
+        if not _alive(tree):
+            _result_treeviews.remove(tree)
+            continue
+        if tree is keep:
+            continue
+        try:
+            selected = tree.selection()
+            if selected:
+                tree.selection_remove(*selected)
+                sync_treeview_selection(tree)
+        except tk.TclError:
+            pass
+
+
+def _on_click_away(event):
+    """Deselect result rows unless the click landed on a row of a result tree."""
+    widget = getattr(event, "widget", None)
+    if widget is None or isinstance(widget, str):
+        return
+    live = [tree for tree in _result_treeviews if _alive(tree)]
+    if not live:
+        return
+    try:
+        # Ignore clicks in other windows (the row detail dialog, popups) so the
+        # row stays highlighted while its details are open.
+        if widget.winfo_toplevel() is not live[0].winfo_toplevel():
+            return
+    except tk.TclError:
+        return
+    if widget in live:
+        try:
+            on_row = (widget.identify_region(event.x, event.y) in ("cell", "tree")
+                      and bool(widget.identify_row(event.y)))
+        except tk.TclError:
+            on_row = False
+        if on_row:
+            _clear_result_selection(keep=widget)
+            return
+    _clear_result_selection()
 
 
 def on_result_row_click(event, treeview):
@@ -236,16 +322,16 @@ def show_session_detail(anchor, row):
     apply_theme(dialog, load_appearance())
 
     body, inner = card(dialog)
-    body.pack(fill="both", expand=True, padx=12, pady=12)
+    body.pack(fill="both", expand=True, padx=spacing["pad"], pady=spacing["pad"])
     inner.grid_columnconfigure(1, weight=1)
 
     title = _display_value(row, "Description", "description", "Target", "target")
     is_ok = str(row.get("result", "")).lower() == "true"
     status_text = "Succeeded" if is_ok else "Error"
-    status_color = palette["log_success"] if is_ok else palette["log_error"]
+    status_color = palette["success_text"] if is_ok else palette["danger_text"]
 
     header = ttk.Frame(inner, style="Card.TFrame")
-    header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+    header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, spacing["lg"]))
     header.grid_columnconfigure(0, weight=1)
     ttk.Label(header, text=title, style="Heading.TLabel").grid(row=0, column=0, sticky="w")
     status = tk.Label(
@@ -284,22 +370,22 @@ def show_session_detail(anchor, row):
     row_index = 1
     for heading, fields in sections:
         ttk.Label(inner, text=heading, style="Subheading.TLabel").grid(
-            row=row_index, column=0, columnspan=2, sticky="w", pady=(8, 4)
+            row=row_index, column=0, columnspan=2, sticky="w", pady=(spacing["md"], spacing["sm"])
         )
         row_index += 1
         for label, keys in fields:
             ttk.Label(inner, text=label, style="Muted.TLabel").grid(
-                row=row_index, column=0, sticky="nw", padx=(0, 16), pady=3
+                row=row_index, column=0, sticky="nw", padx=(0, spacing["xl"]), pady=spacing["row"]
             )
             ttk.Label(inner, text=_display_value(row, *keys), style="Card.TLabel", wraplength=360, justify="left").grid(
-                row=row_index, column=1, sticky="w", pady=3
+                row=row_index, column=1, sticky="w", pady=spacing["row"]
             )
             row_index += 1
 
     message = _display_value(row, "Message", "message")
     if message != "—":
         ttk.Label(inner, text="Message", style="Subheading.TLabel").grid(
-            row=row_index, column=0, columnspan=2, sticky="w", pady=(12, 4)
+            row=row_index, column=0, columnspan=2, sticky="w", pady=(spacing["lg"], spacing["sm"])
         )
         row_index += 1
         inner.grid_rowconfigure(row_index, weight=1)
@@ -308,21 +394,17 @@ def show_session_detail(anchor, row):
             wrap="word",
             height=min(8, max(3, message.count("\n") + 2)),
             relief="flat",
-            highlightthickness=0,
-            borderwidth=0,
-            bg=palette["input_bg"],
-            fg=palette["log_error"] if not is_ok else palette["fg"],
-            font=fonts["body"],
-            padx=8,
-            pady=8,
+            padx=spacing["md"],
+            pady=spacing["md"],
         )
+        style_text(message_box, tone=None if is_ok else "danger")
         message_box.insert("1.0", message)
         message_box.configure(state="disabled")
-        message_box.grid(row=row_index, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        message_box.grid(row=row_index, column=0, columnspan=2, sticky="ew", pady=(0, spacing["md"]))
         row_index += 1
 
     ttk.Button(inner, text="Close", style="Accent.TButton", command=dialog.destroy).grid(
-        row=row_index, column=0, columnspan=2, sticky="e", pady=(12, 0)
+        row=row_index, column=0, columnspan=2, sticky="e", pady=(spacing["lg"], 0)
     )
 
     dialog.update_idletasks()
