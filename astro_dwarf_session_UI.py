@@ -45,13 +45,16 @@ except ImportError:
     def clear_command_interrupt():
         return None
 from video_preview import (
+    PREVIEW_FRAME_INTERVAL,
     RTSP_FIRST_FRAME_TIMEOUT,
+    STREAM_PORT_WAIT,
     find_ffmpeg,
     rtsp_raw_ffmpeg_command,
-    should_open_camera_on_preview_event,
+    should_enter_live_preview_mode,
     should_start_preview_on_lens_toggle,
     split_ppm_frame,
 )
+from dwarf_comms import start_autofocus_without_response, start_calibration_without_response
 
 # import data for config.py
 import dwarf_python_api.get_config_data as config_py
@@ -431,7 +434,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         return self._dwarf_id_int() >= 3
 
     def _ensure_live_preview_mode(self, switch_lens=False):
-        """Open the camera for live view. Never call during imaging."""
+        """Put the scope into live view. Never call during imaging."""
         if getattr(self, "session_running", False):
             return
         if not self._is_dwarf_connected():
@@ -450,10 +453,15 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     self.log("Photo/live mode was not entered", level="warning")
             except Exception as e:
                 self.log(f"Photo mode error: {e}", level="warning")
+        # Dwarf 3 / Mini photo mode already brings up both RTSP channels.
+        # OPEN TELE PHOTO can hang after wide was opened and delays first frame.
+        if self._uses_rtsp_live():
+            self._rtsp_transport = "tcp"
+            return
         self._open_preview_camera()
 
     def _open_preview_camera(self):
-        """Open the tele or wide camera that matches the live-preview lens."""
+        """Open the Dwarf II HTTP camera that matches the live-preview lens."""
         wide = self._preview_is_wide()
         open_camera = perform_open_widecamera if wide else perform_open_camera
         lens = "wide" if wide else "tele"
@@ -575,29 +583,28 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 pass
         threading.Thread(target=reap, daemon=True).start()
 
-    def _video_stream_is_available(self, url, timeout=1.2):
-        """True when the live endpoint is actually serving, or RTSP may still come up."""
-        if url.startswith("rtsp://"):
-            if self._tcp_port_open(self._dwarf_ip(), 554, timeout):
-                return True
-            # D3 RTSP can be UDP-only; try ffmpeg during the retry window.
-            return self._video_should_retry()
-        response = None
-        try:
-            response = requests.get(url, stream=True, timeout=(timeout, timeout))
-            if response.status_code != 200:
+    def _stream_port_for_url(self, url):
+        return 8092 if str(url).startswith("http://") else 554
+
+    def _wait_until_stream_port(self, url, timeout=STREAM_PORT_WAIT):
+        """Wait until the live port is open, then start ffmpeg even if it never is."""
+        host = self._dwarf_ip()
+        port = self._stream_port_for_url(url)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if getattr(self, "_stop_video_stream", False):
                 return False
-            for chunk in response.iter_content(chunk_size=1024):
-                return bool(chunk)
-            return False
-        except Exception:
-            return False
-        finally:
-            if response is not None:
-                try:
-                    response.close()
-                except Exception:
-                    pass
+            if getattr(self, "_reconnect_video_stream", False):
+                return False
+            if self._tcp_port_open(host, port, timeout=0.8):
+                return True
+            time.sleep(0.35)
+        return False
+
+    def _video_stream_is_available(self, url, timeout=1.2):
+        """True when the live HTTP/RTSP endpoint is actually serving."""
+        if url.startswith("rtsp://"):
+            return self._tcp_port_open(self._dwarf_ip(), 554, timeout)
         response = None
         try:
             response = requests.get(url, stream=True, timeout=(timeout, timeout))
@@ -687,7 +694,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 jpg = bytes(bytes_data[start : end + 2])
                 del bytes_data[: end + 2]
                 now = time.time()
-                if now - last_update > 0.07:
+                if now - last_update > PREVIEW_FRAME_INTERVAL:
                     last_update = now
                     try:
                         self._queue_video_frame(self._decode_preview_frame(jpg))
@@ -727,7 +734,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                         bytes_data[:] = rest
                     break
                 now = time.time()
-                if now - last_update > 0.07:
+                if now - last_update > PREVIEW_FRAME_INTERVAL:
                     last_update = now
                     try:
                         image = self._decode_preview_frame(frame)
@@ -838,13 +845,12 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     live_mode = bool(getattr(self, "_request_live_mode", False))
                     self._request_live_mode = False
                     self._request_lens_switch = False
-                    stream_up = self._video_stream_is_available(current_url)
-                    if should_open_camera_on_preview_event(
+                    if should_enter_live_preview_mode(
                         live_mode=live_mode,
                         lens_switch=switch_lens,
-                        stream_up=stream_up,
                     ):
                         self._ensure_live_preview_mode(switch_lens=False)
+                        self._wait_until_stream_port(current_url)
                     self._rtsp_transport = "tcp"
                     current_url = self._resolve_video_stream_url()
                 if current_url != getattr(self, "_logged_video_url", None):
@@ -861,7 +867,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                     )
                     break
 
-                if not self._video_stream_is_available(current_url):
+                if current_url.startswith("http://") and not self._video_stream_is_available(current_url):
                     if in_session or self._video_should_retry():
                         self.after(
                             0,
@@ -3249,7 +3255,10 @@ class AstroDwarfSchedulerApp(tk.Tk):
             if not self._wait_interruptible(wait_before, f"Waiting for {wait_before} seconds"):
                 self.log("Auto Focus stopped")
                 return
-            continue_action = perform_start_autofocus()
+            if self._dwarf_id_int() >= 3:
+                continue_action = start_autofocus_without_response()
+            else:
+                continue_action = perform_start_autofocus()
             if self._action_should_stop():
                 self.log("Auto Focus stopped")
                 return
@@ -3264,7 +3273,10 @@ class AstroDwarfSchedulerApp(tk.Tk):
             if not self._wait_interruptible(wait_after, f"Waiting for {wait_after} seconds"):
                 self.log("Auto Focus stopped")
                 return
-            continue_action = perform_start_autofocus()
+            if self._dwarf_id_int() >= 3:
+                continue_action = start_autofocus_without_response()
+            else:
+                continue_action = perform_start_autofocus()
 
         except Exception as e:
             if self._action_should_stop():
@@ -3315,7 +3327,10 @@ class AstroDwarfSchedulerApp(tk.Tk):
             if not self._wait_interruptible(wait_before, f"Waiting for {wait_before} seconds"):
                 self.log("Calibration stopped")
                 return
-            continue_action = perform_calibration()
+            if self._dwarf_id_int() >= 3:
+                continue_action = start_calibration_without_response()
+            else:
+                continue_action = perform_calibration()
             if self._action_should_stop():
                 self.log("Calibration stopped")
                 return

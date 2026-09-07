@@ -10,6 +10,7 @@ from video_preview import (
     RTSP_SOCKET_TIMEOUT_US,
     find_ffmpeg,
     rtsp_raw_ffmpeg_command,
+    should_enter_live_preview_mode,
     should_open_camera_on_preview_event,
     should_start_preview_on_lens_toggle,
     split_ppm_frame,
@@ -24,6 +25,9 @@ class FfmpegCommandTests(unittest.TestCase):
         self.assertNotIn("-q:v", cmd)
         self.assertIn("scale=1280:-2", cmd)
         self.assertNotIn("fps=", "".join(cmd))
+        self.assertIn("+nobuffer+discardcorrupt", cmd)
+        self.assertEqual(cmd[cmd.index("-probesize") + 1], "512k")
+        self.assertEqual(cmd[cmd.index("-analyzeduration") + 1], "500000")
 
     def test_socket_timeout_outlasts_tele_keyframe_gap(self):
         cmd = rtsp_raw_ffmpeg_command("ffmpeg", "rtsp://192.168.1.1/ch0/stream0", "tcp")
@@ -86,6 +90,21 @@ class LensSwitchPolicyTests(unittest.TestCase):
             should_open_camera_on_preview_event(
                 live_mode=True, lens_switch=False, stream_up=True
             )
+        )
+
+    def test_dwarf3_does_not_open_camera_after_photo_mode(self):
+        self.assertFalse(
+            should_open_camera_on_preview_event(
+                live_mode=True, lens_switch=False, stream_up=False, rtsp_live=True
+            )
+        )
+
+    def test_first_live_enters_photo_mode_even_if_stream_looks_up(self):
+        self.assertTrue(
+            should_enter_live_preview_mode(live_mode=True, lens_switch=False)
+        )
+        self.assertFalse(
+            should_enter_live_preview_mode(live_mode=True, lens_switch=True)
         )
 
     def test_lens_toggle_restarts_even_if_preview_has_stopped(self):

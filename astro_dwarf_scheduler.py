@@ -13,6 +13,16 @@ from dwarf_session import start_dwarf_session, SessionCancelled
 from dwarf_python_api.lib.dwarf_utils import perform_time
 from dwarf_python_api.lib.dwarf_utils import perform_set_location
 from dwarf_python_api.lib.dwarf_utils import perform_disconnect
+try:
+    from dwarf_python_api.lib.dwarf_utils import set_HostMaster
+except ImportError:
+    def set_HostMaster(*args, **kwargs):
+        return False
+try:
+    from dwarf_python_api.lib.dwarf_utils import perform_get_device_state_info
+except ImportError:
+    def perform_get_device_state_info(*args, **kwargs):
+        return False
 
 from dwarf_python_api.lib.dwarf_utils import save_bluetooth_config_from_ini_file
 from dwarf_python_api.get_live_data_dwarf import fn_wait_for_user_input
@@ -595,10 +605,25 @@ def check_and_execute_commands(ui_instance=None, stop_event=None, skip_time_chec
     return sessions_processed
 
 def apply_location_after_time():
-    """SET_TIME already includes timezone_offset. SET_TIME_ZONE is still
+    """Finish the V3 handshake after SET_TIME succeeds.
+
+    SET_TIME already includes timezone_offset. SET_TIME_ZONE is still
     in the V3 proto, but Dwarf 3 firmware returns -13301 for every ID
     tested (IANA Continent/Town, GMT offsets, UTC), so we skip it.
+    Host lock and device-state match the field-tested connect path so
+    later live/camera commands are not rejected as slave mode.
     """
+    try:
+        if set_HostMaster():
+            log.notice("Host lock set")
+        else:
+            log.warning("Host lock was not set")
+    except Exception as exc:
+        log.warning(f"Host lock error: {exc}")
+    try:
+        perform_get_device_state_info()
+    except Exception as exc:
+        log.warning(f"Device state error: {exc}")
     perform_set_location()
 
 def start_connection(startSTA = False, use_web_page = False):

@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1] - 2026-09-07
+
+### Improvements
+- **Scope handshake**: Connect now takes host lock and reads device state after `SET_TIME`, matching the faster V3 control path so live/camera commands are not delayed or rejected as slave mode.
+- **Live preview startup**: Dwarf 3 / Mini live view uses GO LIVE + photo mode, then RTSP, without the hanging OPEN TELE command. The worker waits for the stream port before ffmpeg, then starts decoding with low-delay probe flags.
+- **V3 start commands**: Autofocus and calibration on Dwarf 3 / Mini are sent without waiting for a request ACK that firmware often never sends, so the websocket stays free for live view and later commands.
+
 ## [3.0.0] - 2026-09-05
 
 ### New Features

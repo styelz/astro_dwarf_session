@@ -1,0 +1,22 @@
+---
+description: Always write the git commit message; never open an editor
+alwaysApply: true
+---
+
+# Git commits
+
+When the user asks to commit, write the commit message yourself. Do not open VS Code, vim, or any other editor for the message.
+
+On Windows PowerShell, pass the message with `-m` flags (never bash heredocs):
+
+```
+git commit -m "Short summary of why." -m "Optional second paragraph with a bit more context."
+```
+
+If Git would still launch an editor, override it for that command only:
+
+```
+git -c core.editor=true commit -m "Short summary of why."
+```
+
+Keep the summary to 1–2 sentences focused on why, matching this repo's recent commit style.

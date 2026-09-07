@@ -10,15 +10,23 @@ PREVIEW_WIDTH = 1280
 # Socket idle timeout must be longer than that keyframe gap.
 RTSP_SOCKET_TIMEOUT_US = "30000000"
 RTSP_FIRST_FRAME_TIMEOUT = 45
+# Wait for RTSP/HTTP to bind after photo mode before starting ffmpeg.
+STREAM_PORT_WAIT = 12
+PREVIEW_FRAME_INTERVAL = 0.05
 
 
-def should_open_camera_on_preview_event(*, live_mode, lens_switch, stream_up):
-    """Open the camera for first live entry, not when only switching RTSP URL.
+def should_enter_live_preview_mode(*, live_mode, lens_switch):
+    """GO LIVE + photo mode on first live entry, not when only switching lens."""
+    return bool(live_mode) and not lens_switch
+
+
+def should_open_camera_on_preview_event(*, live_mode, lens_switch, stream_up, rtsp_live=False):
+    """OPEN CAMERA is Dwarf II only. Dwarf 3/Mini photo mode already starts RTSP.
 
     Both Dwarf 3 channels already publish (ch0 tele, ch1 wide). OPEN TELE PHOTO
-    on a lens click is unnecessary and can reset the encoder mid-connect.
+    can hang after photo mode and can reset the encoder mid-connect.
     """
-    if lens_switch:
+    if rtsp_live or lens_switch:
         return False
     return bool(live_mode) and not stream_up
 
@@ -136,25 +144,31 @@ def _windows_registry_path_dirs():
 def rtsp_raw_ffmpeg_command(ffmpeg, url, transport, width=PREVIEW_WIDTH):
     """Decode RTSP to scaled uncompressed PPM frames on stdout.
 
-    Do not use the fps filter here: Dwarf RTSP timestamps are often unusable,
-    so fps= would drop every frame even when VLC plays the same URL.
+    Low-delay flags match the faster Dwarf live path: small probe window so
+    ffmpeg starts decoding instead of analysing, TCP first like VLC, then PPM
+    so this app does not re-encode JPEG. Do not use the fps filter: Dwarf RTSP
+    timestamps are often unusable, so fps= would drop every frame.
     """
     return [
         ffmpeg,
         "-hide_banner",
         "-loglevel",
         "error",
+        "-an",
         "-fflags",
-        "nobuffer",
+        "+nobuffer+discardcorrupt",
         "-flags",
         "low_delay",
+        "-probesize",
+        "512k",
+        "-analyzeduration",
+        "500000",
         "-rtsp_transport",
         transport,
         "-timeout",
         RTSP_SOCKET_TIMEOUT_US,
         "-i",
         url,
-        "-an",
         "-vf",
         f"scale={width}:-2",
         "-f",
