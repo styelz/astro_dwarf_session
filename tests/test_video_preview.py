@@ -1,8 +1,14 @@
+import os
+import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from video_preview import (
     RTSP_FIRST_FRAME_TIMEOUT,
     RTSP_SOCKET_TIMEOUT_US,
+    find_ffmpeg,
     rtsp_raw_ffmpeg_command,
     should_open_camera_on_preview_event,
     should_start_preview_on_lens_toggle,
@@ -25,6 +31,36 @@ class FfmpegCommandTests(unittest.TestCase):
         self.assertGreaterEqual(timeout_us, 12_000_000)
         self.assertEqual(timeout_us, int(RTSP_SOCKET_TIMEOUT_US))
         self.assertGreaterEqual(RTSP_FIRST_FRAME_TIMEOUT, 12)
+
+
+class FindFfmpegTests(unittest.TestCase):
+    _CLEAR_FFMPEG_ENV = {
+        "ASTRO_DWARF_FFMPEG": "",
+        "FFMPEG_BINARY": "",
+        "IMAGEIO_FFMPEG_EXE": "",
+    }
+
+    def test_uses_explicit_env_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ffmpeg = Path(tmp) / "ffmpeg.exe"
+            ffmpeg.write_bytes(b"fake")
+            env = dict(self._CLEAR_FFMPEG_ENV, ASTRO_DWARF_FFMPEG=str(ffmpeg))
+            with mock.patch.dict(os.environ, env, clear=False):
+                with mock.patch("video_preview.shutil.which", return_value=None):
+                    self.assertEqual(Path(find_ffmpeg()).resolve(), ffmpeg.resolve())
+
+    def test_finds_ffmpeg_next_to_frozen_exe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe_dir = Path(tmp)
+            exe = exe_dir / "astro_dwarf_session_UI.exe"
+            ffmpeg = exe_dir / "ffmpeg.exe"
+            exe.write_bytes(b"app")
+            ffmpeg.write_bytes(b"ffmpeg")
+            with mock.patch.object(sys, "frozen", True, create=True):
+                with mock.patch.object(sys, "executable", str(exe)):
+                    with mock.patch("video_preview.shutil.which", return_value=None):
+                        with mock.patch.dict(os.environ, self._CLEAR_FFMPEG_ENV, clear=False):
+                            self.assertEqual(Path(find_ffmpeg()).resolve(), ffmpeg.resolve())
 
 
 class LensSwitchPolicyTests(unittest.TestCase):

@@ -1,6 +1,5 @@
 from fractions import Fraction
 import os
-import shutil
 import socket
 import subprocess
 import time
@@ -47,6 +46,7 @@ except ImportError:
         return None
 from video_preview import (
     RTSP_FIRST_FRAME_TIMEOUT,
+    find_ffmpeg,
     rtsp_raw_ffmpeg_command,
     should_open_camera_on_preview_event,
     should_start_preview_on_lens_toggle,
@@ -535,7 +535,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                 pass
 
     def _find_ffmpeg(self):
-        return shutil.which("ffmpeg")
+        return find_ffmpeg()
 
     def _stop_ffmpeg(self):
         proc = getattr(self, "_ffmpeg_proc", None)
@@ -757,7 +757,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
         ffmpeg = self._find_ffmpeg()
         if not ffmpeg:
             raise RuntimeError(
-                "Dwarf 3 live view is RTSP. Install ffmpeg and keep it on PATH."
+                "Dwarf 3 live view is RTSP. ffmpeg was not found next to the app or on PATH."
             )
         transport = getattr(self, "_rtsp_transport", "tcp") or "tcp"
         kwargs = {
@@ -856,7 +856,7 @@ class AstroDwarfSchedulerApp(tk.Tk):
                         "Install ffmpeg for Dwarf 3 live preview"
                     )
                     self.log(
-                        "Dwarf 3 live view is RTSP (rtsp://IP/ch0/stream0). ffmpeg was not found on PATH.",
+                        "Dwarf 3 live view is RTSP (rtsp://IP/ch0/stream0). ffmpeg was not found next to the app or on PATH.",
                         level="error",
                     )
                     break

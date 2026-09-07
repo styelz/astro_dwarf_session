@@ -31,11 +31,13 @@
 - **Windows installer launch**: The GUI no longer fails to start with `ImportError: cannot import name 'request_command_interrupt'` when the bundled `dwarf_python_api` does not provide that helper.
 - **Timezone on connect**: Dwarf 3 firmware returns `-13301` for `SET_TIME_ZONE` with every timezone ID tested (including documented IANA names such as `Europe/Paris`). Connect no longer sends that command or logs it as an error. Clock offset is still applied by `SET_TIME`.
 - **Stop Scheduler with live preview**: Stopping the scheduler while a stream is running no longer sends a stray GOTO-stop or waits forever on ffmpeg/disconnect, which could freeze the app until it was force-closed.
+- **Windows Dwarf 3 live preview**: The installed Windows app ships ffmpeg and looks next to the executable, so RTSP live view works without ffmpeg on PATH.
 
 ### Packaging
 - **Single version source**: Apps, Windows installer, and GitHub releases now share one version from `CHANGELOG.md` (or `APP_VERSION`).
 - **Same-version rebuilds**: Re-running the GitHub Action for an existing version replaces that GitHub release and tag.
 - **Frozen window version**: Packaged apps now ship `VERSION` and `CHANGELOG.md` so the header version works in the installed build, not only from source.
+- **Windows ffmpeg**: Frozen Windows GUI builds download and ship `ffmpeg.exe` for Dwarf 3 RTSP live preview.
 
 ## [1.7.6] - 2025-10-15
 

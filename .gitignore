@@ -16,3 +16,4 @@ config.lock
 /doc
 /.vscode
 /__pycache__
+/vendor/ffmpeg/
